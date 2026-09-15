@@ -21,7 +21,6 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://deepguard:deepguard@db:5432/deepguard
       SECRET_KEY: change-me-in-production
-      CORS_ORIGINS: http://localhost:5173,http://localhost:3000,http://frontend:80
       DEVICE: cpu
     ports:
       - "8000:8000"
@@ -36,10 +35,10 @@ services:
   frontend:
     build:
       context: ./frontend
-      args:
-        VITE_API_URL: http://localhost:8000
+    environment:
+      DEEPGUARD_API_URL: http://backend:8000
     ports:
-      - "3000:80"
+      - "8501:8501"
     depends_on:
       - backend
 
