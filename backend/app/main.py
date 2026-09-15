@@ -17,7 +17,7 @@ from app.db.models import Base
 from app.ml.inference import get_engine
 from app.schemas import HealthOut
 
-FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+FRONTEND_DIST = None
 
 
 @asynccontextmanager
@@ -81,28 +81,9 @@ def create_app() -> FastAPI:
             inference_mode=inference_mode,
         )
 
-    # Serve the React build from the same application when available.
-    if FRONTEND_DIST.exists():
-        assets = FRONTEND_DIST / "assets"
-        if assets.exists():
-            app.mount("/assets", StaticFiles(directory=str(assets)), name="frontend-assets")
-
-        @app.get("/{full_path:path}")
-        def spa_fallback(full_path: str):
-            candidate = FRONTEND_DIST / full_path
-            if full_path and candidate.is_file():
-                return FileResponse(candidate)
-            return FileResponse(FRONTEND_DIST / "index.html")
-    else:
-
-        @app.get("/")
-        def root() -> dict:
-            return {
-                "app": settings.app_name,
-                "docs": "/docs",
-                "health": "/api/health",
-                "note": "Frontend build missing. Run: cd frontend && npm run build",
-            }
+    @app.get("/")
+    def root() -> dict:
+        return {"app": settings.app_name, "docs": "/docs", "health": "/api/health", "frontend": "Streamlit on port 8501"}
 
     return app
 
