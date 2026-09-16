@@ -49,6 +49,25 @@ Real / Fake + confidence + risk + forensic signals
 | MySQL driver | PyMySQL |
 | Deployment | Docker Compose |
 
+## Languages & configuration
+
+The repository uses the following languages and configuration formats:
+
+| Language / format | Usage |
+|---|---|
+| **Python** | FastAPI backend, Streamlit application, ML inference, preprocessing, training and evaluation scripts, tests |
+| **JavaScript / JSX** | Frontend component and page source retained in the repository |
+| **HTML / JSX markup** | Web-facing component markup within the frontend source |
+| **SQL / MySQL** | Relational database schema, queries and persistence at runtime |
+| **Shell (Bash/Zsh)** | Local setup, installation and development scripts |
+| **YAML** | GitHub Actions CI configuration |
+| **Dockerfile** | Backend, frontend and container build definitions |
+| **TOML** | Deployment/runtime configuration |
+| **Makefile** | Development command shortcuts |
+| **Markdown** | Project documentation |
+
+The primary application code is **Python**. MySQL is the production-oriented local database layer, while JavaScript/JSX frontend source remains part of the repository for the existing web interface assets.
+
 ## Requirements
 
 - macOS, Linux, or Windows
