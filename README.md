@@ -1,6 +1,6 @@
 # DeepGuard AI
 
-Professional AI-powered deepfake detection platform built with **Streamlit + FastAPI + PyTorch**.
+Professional AI-powered deepfake detection platform built with **Streamlit + FastAPI + PyTorch + MySQL**.
 
 DeepGuard analyzes image, video, and supported audio inputs and exposes forensic results through a Streamlit user interface backed by a FastAPI inference API.
 
@@ -42,9 +42,11 @@ Real / Fake + confidence + risk + forensic signals
 | Computer vision | OpenCV |
 | Explainability | Grad-CAM / forensic heatmaps |
 | Authentication | JWT |
-| Database | PostgreSQL / SQLite |
+| Database | MySQL 8+ / MySQL Community Server |
 | Reports | ReportLab |
 | Testing | PyTest |
+| ORM | SQLAlchemy |
+| MySQL driver | PyMySQL |
 | Deployment | Docker Compose |
 
 ## Requirements
@@ -52,6 +54,7 @@ Real / Fake + confidence + risk + forensic signals
 - macOS, Linux, or Windows
 - Python 3.11+
 - Git
+- MySQL 8+ / compatible MySQL Community Server
 - ~5 GB free disk space for ML dependencies
 - Optional: Docker Desktop for containerized deployment
 
@@ -90,7 +93,40 @@ pip install -r frontend/requirements.txt
 
 If PyTorch installation needs a separate platform-specific command, install the appropriate PyTorch build first, then install the remaining requirements.
 
-### 4. Add model weights
+### 4. Configure MySQL
+
+Create the application database and user in MySQL:
+
+```sql
+CREATE DATABASE deepguard CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'deepguard_app'@'localhost' IDENTIFIED BY 'YOUR_STRONG_PASSWORD';
+GRANT ALL PRIVILEGES ON deepguard.* TO 'deepguard_app'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+Create `backend/.env` locally:
+
+```env
+DATABASE_URL=mysql+pymysql://deepguard_app:YOUR_URL_ENCODED_PASSWORD@localhost:3306/deepguard
+```
+
+If your password contains URL-reserved characters such as `@`, encode them in the connection URL. For example, `@` becomes `%40`.
+
+**Never commit `backend/.env` or database credentials to GitHub.**
+
+Verify the connection:
+
+```bash
+./.venv/bin/python -c "import sys; sys.path.insert(0, 'backend'); from sqlalchemy import create_engine; from app.core.config import get_settings; e=create_engine(get_settings().database_url); c=e.connect(); print('MYSQL CONNECTION OK'); c.close()"
+```
+
+Expected:
+
+```text
+MYSQL CONNECTION OK
+```
+
+### 5. Add model weights
 
 Place the EfficientNet checkpoint at:
 
@@ -106,7 +142,7 @@ ls -lh backend/weights/efficientnet.pth
 
 Do not commit private credentials, API keys, uploaded media, generated reports, or other sensitive runtime data.
 
-### 5. Start the FastAPI backend
+### 6. Start the FastAPI backend
 
 Use the virtual-environment interpreter explicitly:
 
@@ -122,7 +158,7 @@ Backend:
 - http://localhost:8000/docs
 - http://localhost:8000/api/health
 
-### 6. Start the Streamlit frontend
+### 7. Start the Streamlit frontend
 
 Open a second terminal:
 
@@ -142,7 +178,7 @@ The Streamlit sidebar contains the FastAPI URL. For local development the defaul
 http://localhost:8000
 ```
 
-### 7. Test the application
+### 8. Test the application
 
 In Streamlit:
 
@@ -154,6 +190,33 @@ In Streamlit:
 6. Review the verdict, confidence, fake probability, risk level, explanation, and technical details.
 
 The **Batch** tab supports multiple files and the **Live** tab supports webcam frame capture.
+
+## Database verification
+
+Connect to MySQL:
+
+```bash
+mysql -u deepguard_app -p deepguard
+```
+
+Then:
+
+```sql
+SHOW TABLES;
+```
+
+Expected application tables:
+
+```text
+detections
+users
+```
+
+Check recent detections:
+
+```sql
+SELECT * FROM detections ORDER BY id DESC LIMIT 5;
+```
 
 ## Makefile shortcuts
 
@@ -181,7 +244,7 @@ Services:
 |---|---:|---|
 | Streamlit | 8501 | Web interface |
 | FastAPI | 8000 | API and inference service |
-| PostgreSQL | 5432 | Application database |
+| MySQL | 5432 | Application database |
 
 Open **http://localhost:8501** after the services start.
 
@@ -312,7 +375,7 @@ DEEPGUARD_API_URL=https://your-api-domain
 
 ## Project status
 
-DeepGuard AI is an active development project. Model accuracy depends on the checkpoint, preprocessing, input quality, and training data. Benchmark and validate models on representative datasets before making production claims.
+DeepGuard AI is an active development project. The current local development stack uses **Streamlit + FastAPI + MySQL + PyTorch** with persistent user and detection history. Model accuracy depends on the checkpoint, preprocessing, input quality, and training data. Benchmark and validate models on representative datasets before making production claims.
 
 ## License
 
