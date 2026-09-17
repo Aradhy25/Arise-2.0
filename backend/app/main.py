@@ -36,13 +36,14 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Configure cross-origin access for development and deployed clients.
+    # Restrict cross-origin access to explicitly configured trusted origins.
+    allowed_origins = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=allowed_origins,
         allow_credentials=False,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
     )
 
     app.include_router(auth.router, prefix="/api")
