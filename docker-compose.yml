@@ -22,9 +22,10 @@ services:
       context: ./backend
     restart: unless-stopped
     environment:
-      DATABASE_URL: mysql+pymysql://deepguard_app:$${MYSQL_PASSWORD}@db:3306/deepguard
+      DATABASE_URL: mysql+pymysql://deepguard_app:${MYSQL_PASSWORD:-deepguard_local}@db:3306/deepguard
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
       DEVICE: ${DEVICE:-cpu}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://localhost:8501,http://localhost:8501}
     ports:
       - "8000:8000"
     volumes:
