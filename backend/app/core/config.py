@@ -11,14 +11,15 @@ class Settings(BaseSettings):
 
     app_name: str = "DeepGuard AI"
     app_version: str = "1.0.0"
-    debug: bool = True
+    debug: bool = False
 
     # Auth
     secret_key: str = "deepguard-dev-secret-change-in-production"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 24
 
-    # Database — SQLite by default; set DATABASE_URL for PostgreSQL
+    # Database — configure DATABASE_URL in backend/.env for MySQL.
+    # SQLite remains the fallback for isolated tests/development only.
     database_url: str = "sqlite:///./deepguard.db"
 
     # Storage
@@ -34,8 +35,8 @@ class Settings(BaseSettings):
     fake_threshold: float = 0.5
     device: str = "cpu"
 
-    # CORS
-    cors_origins: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173"
+    # CORS — comma-separated trusted origins. Configure HTTPS localhost for secure local UI.
+    cors_origins: str = "https://localhost:8501,http://localhost:8501,http://localhost:5173,http://localhost:3000,http://127.0.0.1:8501,http://127.0.0.1:5173"
 
 
 @lru_cache
