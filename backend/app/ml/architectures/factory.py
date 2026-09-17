@@ -1,12 +1,13 @@
-"""Model factory — EfficientNet, Xception, ViT."""
+"""Model factory — EfficientNet, Xception, ViT and dedicated HF detector."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import app.ml.compat  # noqa: F401  — lzma shim for pyenv Mac builds
+import app.ml.compat  # noqa: F401 — lzma shim for pyenv Mac builds
 import torch
 import torch.nn as nn
+from PIL import Image
 from torchvision import models
 
 
@@ -33,6 +34,43 @@ class DeepfakeClassifier(nn.Module):
         return self.backbone(x)
 
 
+class HuggingFaceDeepfakeDetector:
+    """Dedicated real/fake image detector with its own trained classifier head.
+
+    The model is downloaded and cached by Hugging Face Transformers on first use.
+    It is intentionally separate from ImageNet-pretrained EfficientNet/ViT
+    backbones so an untrained classification head can never be presented as a
+    deepfake detector.
+    """
+
+    def __init__(self, model_id: str, device: torch.device):
+        from transformers import AutoImageProcessor, AutoModelForImageClassification
+
+        self.model_id = model_id
+        self.device = device
+        self.processor = AutoImageProcessor.from_pretrained(model_id)
+        self.model = AutoModelForImageClassification.from_pretrained(model_id)
+        self.model.to(device)
+        self.model.eval()
+
+        label_map = {int(k): str(v).lower() for k, v in self.model.config.id2label.items()}
+        fake_ids = [idx for idx, label in label_map.items() if "fake" in label]
+        real_ids = [idx for idx, label in label_map.items() if "real" in label]
+        if not fake_ids or not real_ids:
+            raise ValueError(f"Detector {model_id!r} does not expose Real/Fake labels")
+        self.fake_index = fake_ids[0]
+        self.real_index = real_ids[0]
+
+    @torch.inference_mode()
+    def predict(self, image_rgb) -> float:
+        image = Image.fromarray(image_rgb).convert("RGB")
+        inputs = self.processor(images=image, return_tensors="pt")
+        inputs = {key: value.to(self.device) for key, value in inputs.items()}
+        logits = self.model(**inputs).logits
+        probs = torch.softmax(logits, dim=-1)[0]
+        return float(probs[self.fake_index].item())
+
+
 def _efficientnet(variant: str = "b0", pretrained: bool = True) -> DeepfakeClassifier:
     weights = "DEFAULT" if pretrained else None
     if variant == "b2":
@@ -46,11 +84,7 @@ def _efficientnet(variant: str = "b0", pretrained: bool = True) -> DeepfakeClass
 
 
 def _xception_like(pretrained: bool = True) -> DeepfakeClassifier:
-    """Xception-style backbone via ResNeXt50 (torchvision-native stand-in).
-
-    Full Xception requires timm; ResNeXt50 provides a strong CNN baseline
-    with similar capacity for academic comparison until timm is installed.
-    """
+    """Xception-style backbone via ResNeXt50 (torchvision-native stand-in)."""
     weights = "DEFAULT" if pretrained else None
     net = models.resnext50_32x4d(weights=weights)
     feature_dim = net.fc.in_features
@@ -84,15 +118,30 @@ def load_checkpoint(
     weights_path: Path | None,
     device: torch.device,
 ) -> tuple[nn.Module, bool]:
-    """Load fine-tuned weights if present. Returns (model, loaded_flag)."""
+    """Load a compatible fine-tuned checkpoint; reject partial/mismatched weights."""
     if weights_path and weights_path.exists():
-        state = torch.load(weights_path, map_location=device, weights_only=True)
-        if isinstance(state, dict) and "state_dict" in state:
-            state = state["state_dict"]
-        model.load_state_dict(state, strict=False)
-        model.to(device)
-        model.eval()
-        return model, True
+        try:
+            state = torch.load(weights_path, map_location=device, weights_only=True)
+            if isinstance(state, dict) and "state_dict" in state:
+                state = state["state_dict"]
+            if not isinstance(state, dict):
+                raise ValueError("Checkpoint does not contain a state dictionary")
+            state = {str(k).removeprefix("module."): v for k, v in state.items()}
+            incompatible = model.load_state_dict(state, strict=False)
+            if incompatible.missing_keys or incompatible.unexpected_keys:
+                raise ValueError(
+                    "Checkpoint architecture mismatch: "
+                    f"missing={len(incompatible.missing_keys)}, "
+                    f"unexpected={len(incompatible.unexpected_keys)}"
+                )
+            model.to(device)
+            model.eval()
+            return model, True
+        except Exception:
+            # Never label a partially loaded/random classifier as fine-tuned.
+            model.to(device)
+            model.eval()
+            return model, False
     model.to(device)
     model.eval()
     return model, False
