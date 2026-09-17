@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_name: str = "DeepGuard AI"
-    app_version: str = "1.0.0"
+    app_version: str = "1.1.0"
     debug: bool = False
 
     # Auth
@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     max_video_frames: int = 40
     fake_threshold: float = 0.5
     device: str = "cpu"
+
+    # Dedicated deepfake detector. This avoids treating ImageNet classifier
+    # heads as deepfake detectors. A local fine-tuned checkpoint can be used
+    # explicitly after it has been trained and validated for this architecture.
+    detector_backend: str = "huggingface"
+    hf_model_id: str = "dima806/deepfake_vs_real_image_detection"
+    use_local_checkpoint: bool = False
 
     # CORS — comma-separated trusted origins. Configure HTTPS localhost for secure local UI.
     cors_origins: str = "https://localhost:8501,http://localhost:8501,http://localhost:5173,http://localhost:3000,http://127.0.0.1:8501,http://127.0.0.1:5173"
