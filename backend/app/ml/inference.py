@@ -15,7 +15,11 @@ import torch.nn.functional as F
 
 from app.core.config import get_settings
 from app.ml.audio import AUDIO_EXTS, analyze_audio
-from app.ml.architectures.factory import build_model, load_checkpoint
+from app.ml.architectures.factory import (
+    HuggingFaceDeepfakeDetector,
+    build_model,
+    load_checkpoint,
+)
 from app.ml.face_detector import FaceDetector
 from app.ml.forensics import forensic_fake_probability, forensic_heatmap
 from app.ml.gradcam import GradCAM, find_last_conv, overlay_heatmap
@@ -48,22 +52,50 @@ class InferenceResult:
 class DeepfakeEngine:
     def __init__(self, model_name: str | None = None):
         self.settings = get_settings()
-        self.model_name = model_name or self.settings.default_model
+        requested_model = model_name or self.settings.default_model
         self.device = torch.device(self.settings.device)
         self.face_detector = FaceDetector()
-        self.model = build_model(self.model_name, pretrained=True)
-        weights = self.settings.weights_dir / f"{self.model_name.replace('-', '_')}.pth"
-        self.model, self.has_finetuned_weights = load_checkpoint(self.model, weights, self.device)
-        if self.has_finetuned_weights:
-            self.model_version = "1.0-finetuned"
+        self.model = None
+        self.hf_detector = None
+        self.has_finetuned_weights = False
+        self.detector_backend = "forensic-heuristic"
+
+        # The old EfficientNet path could run an ImageNet backbone with a random
+        # binary head and still report 100% confidence. That is not a detector.
+        # By default use a genuinely fine-tuned Real/Fake classifier from HF.
+        if self.settings.detector_backend.lower() == "huggingface":
+            try:
+                self.hf_detector = HuggingFaceDeepfakeDetector(
+                    self.settings.hf_model_id, self.device
+                )
+                self.model_name = "vit-deepfake"
+                self.model_version = "hf-dima806"
+                self.detector_backend = "huggingface-vit"
+            except Exception:
+                self.hf_detector = None
+                self.model_name = "forensic-fallback"
+                self.model_version = "1.1-heuristic"
         else:
-            # Still run the network — but mark that research datasets should replace bootstrap
-            self.model_version = "1.0-imagenet-head"
+            self.model_name = requested_model
+            self.model = build_model(self.model_name, pretrained=True)
+            weights = self.settings.weights_dir / f"{self.model_name.replace('-', '_')}.pth"
+            self.model, self.has_finetuned_weights = load_checkpoint(
+                self.model, weights, self.device
+            )
+            if self.has_finetuned_weights and self.settings.use_local_checkpoint:
+                self.model_version = "1.1-local-finetuned"
+                self.detector_backend = "local-finetuned"
+            else:
+                # Never use an ImageNet/random binary head as a deepfake detector.
+                self.model = None
+                self.model_version = "1.1-heuristic"
+                self.has_finetuned_weights = False
+                self.detector_backend = "forensic-heuristic"
 
     def predict_file(self, path: str | Path, model_override: str | None = None) -> InferenceResult:
         path = Path(path)
         ext = path.suffix.lower()
-        if model_override and model_override != self.model_name:
+        if model_override and model_override != self.model_name and self.settings.detector_backend.lower() != "huggingface":
             return DeepfakeEngine(model_override).predict_file(path)
 
         if ext in IMAGE_EXTS:
@@ -77,11 +109,21 @@ class DeepfakeEngine:
         return enrich_result(result, path)
 
     def predict_ensemble(self, path: str | Path, models: list[str] | None = None) -> InferenceResult:
-        """Run multiple visual models and vote (majority + mean probability)."""
+        """Run multiple configured detectors and vote on their probabilities."""
         path = Path(path)
         ext = path.suffix.lower()
         if ext in AUDIO_EXTS:
             return self.predict_file(path)
+
+        if self.settings.detector_backend.lower() == "huggingface":
+            # There is one validated deepfake detector in the default runtime.
+            # Do not pretend three ImageNet heads are independent detectors.
+            result = self.predict_file(path)
+            result.model_name = "vit-deepfake"
+            result.model_version = "hf-dima806"
+            result.mode = "huggingface-vit"
+            result.details["aggregation"] = "single_validated_detector"
+            return result
 
         models = models or ["efficientnet", "xception", "vit"]
         t0 = time.perf_counter()
@@ -183,6 +225,8 @@ class DeepfakeEngine:
                 "fake_probability": round(float(fake_prob), 4),
                 "signals": signals,
                 "finetuned_weights": self.has_finetuned_weights,
+                "detector_backend": self.detector_backend,
+                "detector_model_id": self.settings.hf_model_id if self.hf_detector else None,
                 "realtime": False,
             },
         )
@@ -193,7 +237,7 @@ class DeepfakeEngine:
         probs: list[float] = []
         heatmaps: list[np.ndarray] = []
         faces_used = 0
-        mode = "pytorch"
+        mode = self.detector_backend
         last_signals: dict = {}
 
         for frame in sample.frames:
@@ -236,6 +280,8 @@ class DeepfakeEngine:
                 "video_fps": sample.fps,
                 "video_duration_sec": round(sample.duration_sec, 2),
                 "finetuned_weights": self.has_finetuned_weights,
+                "detector_backend": self.detector_backend,
+                "detector_model_id": self.settings.hf_model_id if self.hf_detector else None,
                 "signals": last_signals,
                 "aggregation": "mean_frame_probability",
                 "realtime": False,
@@ -243,7 +289,7 @@ class DeepfakeEngine:
         )
 
     def predict_frame_bgr(self, frame_bgr: np.ndarray, *, include_heatmap: bool = True) -> InferenceResult:
-        """Fast path for live webcam frames (numpy BGR from OpenCV / decoded JPEG)."""
+        """Fast path for live webcam frames."""
         t0 = time.perf_counter()
         image = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         face = self.face_detector.detect_or_full(image)
@@ -255,7 +301,11 @@ class DeepfakeEngine:
         heatmap_path = None
         if include_heatmap:
             overlay = overlay_heatmap(face.image_rgb, heatmap)
-            ok, buf = cv2.imencode(".jpg", cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR), [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+            ok, buf = cv2.imencode(
+                ".jpg",
+                cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR),
+                [int(cv2.IMWRITE_JPEG_QUALITY), 80],
+            )
             if ok:
                 heatmap_b64 = base64.b64encode(buf.tobytes()).decode("ascii")
 
@@ -279,48 +329,61 @@ class DeepfakeEngine:
                 "fake_probability": round(float(fake_prob), 4),
                 "signals": signals,
                 "finetuned_weights": self.has_finetuned_weights,
+                "detector_backend": self.detector_backend,
+                "detector_model_id": self.settings.hf_model_id if self.hf_detector else None,
                 "realtime": True,
             },
         )
         return enrich_result(result)
 
     def _predict_face(self, face_rgb: np.ndarray) -> tuple[float, str, dict, np.ndarray]:
-        """Always run the PyTorch model + Grad-CAM on the face crop."""
-        tensor = to_tensor(face_rgb, self.settings.image_size).unsqueeze(0).to(self.device)
-        with torch.enable_grad():
-            logits = self.model(tensor)
-            probs = F.softmax(logits, dim=1)[0]
-            model_fake = float(probs[1].item())
-
-            layer = find_last_conv(self.model)
-            if layer is not None:
-                cam_engine = GradCAM(self.model, layer)
-                try:
-                    cam = cam_engine.generate(tensor, class_idx=1 if model_fake >= 0.5 else 0)
-                finally:
-                    cam_engine.close()
-            else:
-                cam = forensic_heatmap(face_rgb)
-
-        # Auxiliary forensic signals (real analysis of this frame — not mock labels)
+        """Run a validated deepfake classifier, never an untrained ImageNet head."""
         forensic = forensic_fake_probability(face_rgb)
         forensic_p = forensic["fake_probability"]
+        cam = forensic_heatmap(face_rgb)
 
-        # If we have fine-tuned weights, trust the network; else fuse lightly with forensics
-        if self.has_finetuned_weights:
-            fake_prob = model_fake
-            mode = "pytorch"
-        else:
-            fake_prob = 0.7 * model_fake + 0.3 * forensic_p
-            mode = "pytorch+forensics"
+        if self.hf_detector is not None:
+            model_fake = self.hf_detector.predict(face_rgb)
+            fake_prob = float(np.clip(model_fake, 0.0, 1.0))
+            mode = "huggingface-vit"
+            signals = {
+                "model_fake_prob": round(model_fake, 4),
+                "model_real_prob": round(1.0 - model_fake, 4),
+                "forensic_fake_prob": round(forensic_p, 4),
+                **{f"forensic_{k}": v for k, v in forensic["signals"].items()},
+            }
+            return fake_prob, mode, signals, cam
 
+        if self.model is not None and self.has_finetuned_weights:
+            tensor = to_tensor(face_rgb, self.settings.image_size).unsqueeze(0).to(self.device)
+            with torch.enable_grad():
+                logits = self.model(tensor)
+                probs = F.softmax(logits, dim=1)[0]
+                model_fake = float(probs[1].item())
+                layer = find_last_conv(self.model)
+                if layer is not None:
+                    cam_engine = GradCAM(self.model, layer)
+                    try:
+                        cam = cam_engine.generate(tensor, class_idx=1 if model_fake >= 0.5 else 0)
+                    finally:
+                        cam_engine.close()
+            signals = {
+                "model_fake_prob": round(model_fake, 4),
+                "model_real_prob": round(float(probs[0].item()), 4),
+                "forensic_fake_prob": round(forensic_p, 4),
+                **{f"forensic_{k}": v for k, v in forensic["signals"].items()},
+            }
+            return float(np.clip(model_fake, 0.0, 1.0)), "pytorch", signals, cam
+
+        # Safe fallback: forensic cues only. This is intentionally not fused with
+        # an untrained classifier because that created the false 100% results.
         signals = {
-            "model_fake_prob": round(model_fake, 4),
-            "model_real_prob": round(float(probs[0].item()), 4),
+            "model_fake_prob": None,
+            "model_real_prob": None,
             "forensic_fake_prob": round(forensic_p, 4),
             **{f"forensic_{k}": v for k, v in forensic["signals"].items()},
         }
-        return float(np.clip(fake_prob, 0.0, 1.0)), mode, signals, cam
+        return forensic_p, "forensic-heuristic", signals, cam
 
     def _save_heatmap(self, image_rgb: np.ndarray, cam: np.ndarray) -> Path | None:
         try:
@@ -339,7 +402,12 @@ _engine: DeepfakeEngine | None = None
 
 def enrich_result(result: InferenceResult, path: Path | None = None) -> InferenceResult:
     """Attach risk tier, SHA-256, and plain-language explanation."""
-    fake_p = float(result.details.get("fake_probability", result.confidence if result.prediction == "FAKE" else 1 - result.confidence))
+    fake_p = float(
+        result.details.get(
+            "fake_probability",
+            result.confidence if result.prediction == "FAKE" else 1 - result.confidence,
+        )
+    )
     ratio = result.suspicious_frames / max(result.frames_analyzed, 1)
     risk = risk_level(fake_p, ratio)
     explanation = explain_result(
