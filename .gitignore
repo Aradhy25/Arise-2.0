@@ -27,6 +27,7 @@ build/
 
 # Local HTTPS development artifacts
 .cert/
+.streamlit/config.toml
 .streamlit/local-config.toml
 
 # Uploads & artifacts
