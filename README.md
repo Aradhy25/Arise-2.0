@@ -24,7 +24,8 @@ FastAPI Backend :8000
    │
    ├── Authentication / API
    ├── Media processing
-   ├── Forensic analysis
+   ├── Dedicated Real/Fake detector
+   ├── Forensic analysis / heatmaps
    └── Detection history / reports
    │
    ▼
@@ -37,10 +38,11 @@ PyTorch ML Pipeline → MySQL persistence
 |---|---|
 | Frontend | Streamlit |
 | Backend | FastAPI + Uvicorn |
-| Deep learning | PyTorch + TorchVision |
-| Models | EfficientNet-B0, Xception/ResNeXt, ViT-B/16 |
+| Deep learning | PyTorch + Hugging Face Transformers |
+| Primary image detector | Fine-tuned ViT Real/Fake classifier |
+| Optional local detector | EfficientNet-B0 / ResNeXt / ViT with validated fine-tuned checkpoint |
 | Computer vision | OpenCV |
-| Explainability | Grad-CAM / forensic heatmaps |
+| Explainability | Forensic heatmaps / Grad-CAM for validated local checkpoints |
 | Authentication | JWT |
 | Database | MySQL 8+ / MySQL Community Server |
 | ORM | SQLAlchemy |
@@ -48,6 +50,37 @@ PyTorch ML Pipeline → MySQL persistence
 | Reports | ReportLab |
 | Testing | PyTest |
 | Containerization | Docker + Docker Compose |
+
+## Detection engine
+
+The default visual detector is **`dima806/deepfake_vs_real_image_detection`**, a fine-tuned Vision Transformer with explicit `Real` and `Fake` labels. The model card reports strong benchmark results on its training/evaluation data, but also warns about concept drift because the model was trained on data collected years ago. Those benchmark numbers should therefore **not** be treated as DeepGuard's current real-world accuracy. urlModel card on Hugging Facehttps://huggingface.co/dima806/deepfake_vs_real_image_detection
+
+This change is important because an ImageNet-pretrained EfficientNet with a newly created binary classification head is **not** a deepfake detector. DeepGuard now refuses mismatched local checkpoints and will not present a random/untrained binary head as a valid detector.
+
+On first visual inference, Transformers downloads and caches the detector model (roughly 343 MB for the current safetensors checkpoint). Subsequent runs use the local Hugging Face cache.
+
+### Configure the detector
+
+`backend/.env` can contain:
+
+```env
+DETECTOR_BACKEND=huggingface
+HF_MODEL_ID=dima806/deepfake_vs_real_image_detection
+USE_LOCAL_CHECKPOINT=false
+```
+
+A local checkpoint can be enabled only after it has been trained for the repository's exact classifier architecture:
+
+```env
+DETECTOR_BACKEND=local
+USE_LOCAL_CHECKPOINT=true
+```
+
+If a local checkpoint has missing or unexpected parameters, DeepGuard rejects it instead of silently using partially loaded weights.
+
+### Important limitation
+
+Deepfake detection is not a universal truth oracle. The default Hugging Face model is useful as a trained baseline for Real/Fake image classification, but its own model card warns about concept drift. For a production-quality research system, benchmark and fine-tune the detector on current, representative datasets containing the specific manipulation types you care about (face swaps, reenactment, diffusion/AI-generated faces, compression variants, social-media recompression, and current generators).
 
 ## Languages & configuration
 
@@ -71,8 +104,8 @@ PyTorch ML Pipeline → MySQL persistence
 - Python **3.11+**
 - Git
 - MySQL **8+**
-- Internet access for Python packages and model dependencies
-- At least ~5 GB free disk space for ML dependencies
+- Internet access for Python packages and the first Hugging Face model download
+- At least ~6 GB free disk space for ML dependencies and the detector cache
 
 ### Docker
 
@@ -113,21 +146,33 @@ Copy `backend/.env.example` to `backend/.env` and configure:
 ```env
 DATABASE_URL=mysql+pymysql://deepguard_app:YOUR_URL_ENCODED_PASSWORD@localhost:3306/deepguard
 SECRET_KEY=replace-with-a-long-random-secret
-CORS_ORIGINS=http://localhost:8501
+CORS_ORIGINS=https://localhost:8501,http://localhost:8501,http://localhost:5173,http://localhost:3000,http://127.0.0.1:8501,http://127.0.0.1:5173
 DEVICE=cpu
 DEFAULT_MODEL=efficientnet
+DETECTOR_BACKEND=huggingface
+HF_MODEL_ID=dima806/deepfake_vs_real_image_detection
+USE_LOCAL_CHECKPOINT=false
 DEEPGUARD_API_URL=http://localhost:8000
 ```
 
 If the database password contains URL-reserved characters such as `@`, encode them (`@` → `%40`).
 
-### 4. Start FastAPI
+### 4. Install/update dependencies
+
+If you already have a `.venv`, update it after pulling the detector changes:
+
+```bash
+./.venv/bin/python -m pip install -r backend/requirements.txt
+./.venv/bin/python -m pip install -r frontend/requirements.txt
+```
+
+### 5. Start FastAPI
 
 ```bash
 ./.venv/bin/python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000
 ```
 
-### 5. Start Streamlit
+### 6. Start Streamlit
 
 In a second terminal:
 
@@ -139,7 +184,7 @@ Open `http://localhost:8501` for ordinary local HTTP development.
 
 ## 🔒 Secure local HTTPS — macOS
 
-For local development, DeepGuard now includes `scripts/secure_local_macos.sh`. It uses **mkcert** to create a locally trusted certificate for `localhost`, then launches Streamlit with TLS. Streamlit supports TLS through `server.sslCertFile` and `server.sslKeyFile`; for production, Streamlit recommends terminating TLS at a reverse proxy or load balancer instead. citeturn0search0turn0search1
+For local development, DeepGuard includes `scripts/secure_local_macos.sh`. It uses **mkcert** to create a locally trusted certificate for `localhost`, then launches Streamlit with TLS.
 
 From the repository root:
 
@@ -156,37 +201,6 @@ The script will:
 4. Store the certificate/private key under `.cert/`.
 5. Create an ignored local Streamlit TLS configuration under `.streamlit/local-config.toml`.
 6. Start Streamlit on `https://localhost:8501`.
-
-`mkcert` is specifically designed for locally trusted development certificates and supports macOS system trust stores. Its generated root CA private key must never be shared. citeturn0search2
-
-### Secure local architecture
-
-```text
-Browser
-  │
-  │ HTTPS / TLS
-  ▼
-https://localhost:8501
-  │
-  │ local Python request
-  ▼
-http://localhost:8000
-FastAPI
-  │
-  ▼
-MySQL :3306
-```
-
-The FastAPI and MySQL ports remain local services; the browser-facing Streamlit interface is encrypted with HTTPS. For a public deployment, put TLS termination in front of the application rather than exposing these development settings directly.
-
-### Important
-
-The following files are intentionally local-only and ignored by Git:
-
-```text
-.cert/
-.streamlit/local-config.toml
-```
 
 **Never commit a TLS private key or your mkcert root CA private key.**
 
@@ -212,8 +226,6 @@ In another PowerShell window:
 ```
 
 Open `http://localhost:8501`.
-
-For Windows HTTPS development, use the same mkcert approach or a local reverse proxy. Do not copy a private development key into the repository.
 
 ## Quick start — Docker
 
@@ -247,19 +259,19 @@ docker compose down -v
 
 ## Model weights
 
-Place model checkpoints in:
+Place optional local fine-tuned checkpoints in:
 
 ```text
 backend/weights/
 ```
 
-Current EfficientNet checkpoint:
+Current legacy/local checkpoint path:
 
 ```text
 backend/weights/efficientnet.pth
 ```
 
-Do not commit private datasets or credentials.
+Do not enable it as the detector unless it has been trained for the exact repository architecture and passes validation. The default Hugging Face detector does not require the checkpoint to be committed to GitHub.
 
 ## Database verification
 
@@ -328,7 +340,7 @@ PUBLIC
 Browser → HTTPS reverse proxy / hosting → FastAPI → Hosted MySQL
 ```
 
-Use environment variables/secrets for public deployments. Never publish `backend/.env`, database passwords, JWT secrets or private model/data credentials. Streamlit also recommends keeping secrets outside source control. citeturn0search10turn0search11
+Use environment variables/secrets for public deployments. Never publish `backend/.env`, database passwords, JWT secrets or private model/data credentials.
 
 ## Project structure
 
@@ -374,7 +386,7 @@ For production:
 
 ## Project status
 
-DeepGuard AI is an active development project. Detection quality depends on model weights, preprocessing, input quality and training data; benchmark models on representative datasets before making production accuracy claims.
+DeepGuard AI is an active development project. Detection quality depends on model weights, preprocessing, input quality, manipulation type, and training data. Benchmark models on representative current datasets before making production accuracy claims.
 
 ## License
 
