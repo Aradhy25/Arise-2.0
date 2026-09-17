@@ -6,14 +6,10 @@ DeepGuard analyzes supported image, video, and audio inputs and exposes forensic
 
 ## Cross-platform support
 
-DeepGuard is prepared for local development on:
-
-- **Windows 10/11** — PowerShell setup and Windows Python virtual environment
-- **macOS** — Intel and Apple Silicon (M1/M2/M3/M4) where supported by the installed PyTorch build
-- **Linux** — x86_64 and other platforms supported by the selected Python/PyTorch wheels
-- **Docker** — recommended when you want the most consistent environment across operating systems
-
-The repository provides platform-specific setup scripts so users do not need to manually translate Unix commands to Windows.
+- **Windows 10/11** — PowerShell setup
+- **macOS** — Intel and Apple Silicon (M1/M2/M3/M4), subject to PyTorch wheel support
+- **Linux** — platforms supported by the selected Python/PyTorch wheels
+- **Docker** — consistent service layout across Windows, macOS and Linux
 
 ## Architecture
 
@@ -22,7 +18,7 @@ Browser
    │
    ▼
 Streamlit Frontend :8501
-   │ HTTP/REST
+   │ HTTP/REST (local server-to-server)
    ▼
 FastAPI Backend :8000
    │
@@ -32,13 +28,7 @@ FastAPI Backend :8000
    └── Detection history / reports
    │
    ▼
-PyTorch ML Pipeline
-   ├── EfficientNet
-   ├── Xception / ResNeXt
-   └── ViT
-   │
-   ├── MySQL persistence
-   └── Real / Fake + confidence + risk + forensic signals
+PyTorch ML Pipeline → MySQL persistence
 ```
 
 ## Tech stack
@@ -63,17 +53,16 @@ PyTorch ML Pipeline
 
 | Language / format | Usage |
 |---|---|
-| **Python** | Backend, Streamlit, ML inference, preprocessing, tests and utilities |
-| **SQL / MySQL** | Database persistence and queries |
-| **JavaScript / JSX** | Existing frontend source retained in the repository |
-| **HTML / JSX markup** | Frontend markup where applicable |
-| **Shell (Bash)** | macOS/Linux setup and development scripts |
-| **PowerShell** | Windows setup automation |
-| **YAML** | CI/CD and configuration where present |
-| **Dockerfile** | Container images |
-| **TOML** | Python/deployment configuration where present |
-| **Makefile** | Unix development shortcuts |
-| **Markdown** | Documentation |
+| Python | Backend, Streamlit, ML inference, preprocessing and tests |
+| SQL / MySQL | Database persistence and queries |
+| JavaScript / JSX | Existing frontend source retained in the repository |
+| Shell (Bash) | macOS/Linux automation |
+| PowerShell | Windows automation |
+| YAML | CI/CD and configuration where present |
+| Dockerfile | Container images |
+| TOML | Python/deployment configuration |
+| Makefile | Unix development shortcuts |
+| Markdown | Documentation |
 
 ## Requirements
 
@@ -81,18 +70,16 @@ PyTorch ML Pipeline
 
 - Python **3.11+**
 - Git
-- MySQL **8+** or compatible MySQL Community Server
+- MySQL **8+**
 - Internet access for Python packages and model dependencies
 - At least ~5 GB free disk space for ML dependencies
-- A supported CPU; GPU acceleration is optional and depends on the PyTorch build and operating system
 
-### Docker installation
+### Docker
 
 - Docker Desktop on Windows/macOS, or Docker Engine + Docker Compose on Linux
-- At least ~6–10 GB RAM recommended for the ML stack
-- Additional disk space for images, dependencies, model weights and MySQL data
+- ~6–10 GB RAM recommended for the ML stack
 
-> **PyTorch note:** PyTorch wheels vary by operating system, CPU architecture and accelerator. The pinned requirements are the project's tested baseline; if your platform does not provide a compatible wheel for a pinned version, install a compatible official PyTorch build for that platform first, then install the remaining requirements.
+> **PyTorch note:** PyTorch wheels vary by operating system, CPU architecture and accelerator. If a pinned wheel is unavailable for your platform, install a compatible official PyTorch build for that platform first.
 
 ## Quick start — macOS / Linux
 
@@ -103,18 +90,16 @@ git clone https://github.com/Aradhy25/Arise-2.0.git
 cd Arise-2.0
 ```
 
-### 2. Run the setup script
+### 2. Setup
 
 ```bash
 chmod +x scripts/setup_unix.sh
 ./scripts/setup_unix.sh
 ```
 
-The script creates `.venv`, upgrades packaging tools, installs backend/frontend dependencies and creates a safe `backend/.env` template when one does not exist.
-
 ### 3. Configure MySQL
 
-Create the application database and user:
+Create the database and application user:
 
 ```sql
 CREATE DATABASE deepguard CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -123,25 +108,20 @@ GRANT ALL PRIVILEGES ON deepguard.* TO 'deepguard_app'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
-Copy/configure:
-
-```text
-backend/.env.example → backend/.env
-```
-
-Set:
+Copy `backend/.env.example` to `backend/.env` and configure:
 
 ```env
 DATABASE_URL=mysql+pymysql://deepguard_app:YOUR_URL_ENCODED_PASSWORD@localhost:3306/deepguard
 SECRET_KEY=replace-with-a-long-random-secret
+CORS_ORIGINS=http://localhost:8501
 DEVICE=cpu
 DEFAULT_MODEL=efficientnet
 DEEPGUARD_API_URL=http://localhost:8000
 ```
 
-If the password contains URL-reserved characters such as `@`, encode them. For example, `@` becomes `%40`.
+If the database password contains URL-reserved characters such as `@`, encode them (`@` → `%40`).
 
-### 4. Start backend
+### 4. Start FastAPI
 
 ```bash
 ./.venv/bin/python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000
@@ -149,72 +129,93 @@ If the password contains URL-reserved characters such as `@`, encode them. For e
 
 ### 5. Start Streamlit
 
-Open another terminal:
+In a second terminal:
 
 ```bash
 ./.venv/bin/python -m streamlit run frontend/app.py --server.port 8501
 ```
 
-Open **http://localhost:8501**.
+Open `http://localhost:8501` for ordinary local HTTP development.
+
+## 🔒 Secure local HTTPS — macOS
+
+For local development, DeepGuard now includes `scripts/secure_local_macos.sh`. It uses **mkcert** to create a locally trusted certificate for `localhost`, then launches Streamlit with TLS. Streamlit supports TLS through `server.sslCertFile` and `server.sslKeyFile`; for production, Streamlit recommends terminating TLS at a reverse proxy or load balancer instead. citeturn0search0turn0search1
+
+From the repository root:
+
+```bash
+chmod +x scripts/secure_local_macos.sh
+./scripts/secure_local_macos.sh
+```
+
+The script will:
+
+1. Install `mkcert` with Homebrew if necessary.
+2. Install a local development CA with `mkcert -install`.
+3. Generate a certificate for `localhost`, `127.0.0.1` and `::1`.
+4. Store the certificate/private key under `.cert/`.
+5. Create an ignored local Streamlit TLS configuration under `.streamlit/local-config.toml`.
+6. Start Streamlit on `https://localhost:8501`.
+
+`mkcert` is specifically designed for locally trusted development certificates and supports macOS system trust stores. Its generated root CA private key must never be shared. citeturn0search2
+
+### Secure local architecture
+
+```text
+Browser
+  │
+  │ HTTPS / TLS
+  ▼
+https://localhost:8501
+  │
+  │ local Python request
+  ▼
+http://localhost:8000
+FastAPI
+  │
+  ▼
+MySQL :3306
+```
+
+The FastAPI and MySQL ports remain local services; the browser-facing Streamlit interface is encrypted with HTTPS. For a public deployment, put TLS termination in front of the application rather than exposing these development settings directly.
+
+### Important
+
+The following files are intentionally local-only and ignored by Git:
+
+```text
+.cert/
+.streamlit/local-config.toml
+```
+
+**Never commit a TLS private key or your mkcert root CA private key.**
 
 ## Quick start — Windows PowerShell
-
-### 1. Clone
 
 ```powershell
 git clone https://github.com/Aradhy25/Arise-2.0.git
 cd Arise-2.0
-```
-
-### 2. Run setup
-
-```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\scripts\setup_windows.ps1
 ```
 
-If Python is installed as `py` rather than `python`, create the environment manually:
-
-```powershell
-py -3.11 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip setuptools wheel
-.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
-.\.venv\Scripts\python.exe -m pip install -r frontend\requirements.txt
-```
-
-### 3. Configure MySQL
-
-Use MySQL Workbench or the MySQL CLI to create the `deepguard` database and `deepguard_app` user, then copy:
-
-```text
-backend\.env.example → backend\.env
-```
-
-Set the `DATABASE_URL` to your Windows MySQL instance, for example:
-
-```env
-DATABASE_URL=mysql+pymysql://deepguard_app:YOUR_URL_ENCODED_PASSWORD@localhost:3306/deepguard
-```
-
-### 4. Start backend
+Configure `backend\.env`, then start:
 
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000
 ```
 
-### 5. Start Streamlit
-
-Open another PowerShell window:
+In another PowerShell window:
 
 ```powershell
 .\.venv\Scripts\python.exe -m streamlit run frontend\app.py --server.port 8501
 ```
 
-Open **http://localhost:8501**.
+Open `http://localhost:8501`.
 
-## Quick start — Docker (all supported desktop/server OS)
+For Windows HTTPS development, use the same mkcert approach or a local reverse proxy. Do not copy a private development key into the repository.
 
-Docker is the most consistent installation option when you want the same service layout on Windows, macOS or Linux.
+## Quick start — Docker
 
 From the repository root:
 
@@ -230,41 +231,37 @@ Services:
 | FastAPI | 8000 | API and inference |
 | MySQL | 3306 | Application database |
 
-Open **http://localhost:8501**.
+Open `http://localhost:8501`.
 
-Stop the stack:
+Stop:
 
 ```bash
 docker compose down
 ```
 
-Remove containers and the development database volume:
+Remove the development database volume:
 
 ```bash
 docker compose down -v
 ```
 
-> Docker Compose uses a MySQL container and does not use your host MySQL installation. This makes the Docker setup independent of whether MySQL is installed natively on Windows, macOS or Linux.
-
 ## Model weights
 
-Place the required model checkpoint(s) in:
+Place model checkpoints in:
 
 ```text
 backend/weights/
 ```
 
-For the current EfficientNet setup:
+Current EfficientNet checkpoint:
 
 ```text
 backend/weights/efficientnet.pth
 ```
 
-Model weights can be large and platform-independent, but inference acceleration depends on the host's PyTorch build. Do not commit private datasets or credentials.
+Do not commit private datasets or credentials.
 
 ## Database verification
-
-Native installation:
 
 ```bash
 mysql -u deepguard_app -p deepguard
@@ -283,12 +280,6 @@ detections
 users
 ```
 
-Docker installation:
-
-```bash
-docker compose exec db mysql -u deepguard_app -p deepguard
-```
-
 ## Testing
 
 macOS/Linux:
@@ -304,8 +295,6 @@ Windows:
 ```
 
 ## Makefile
-
-`make` is convenient on macOS/Linux and is optional on Windows. Native Windows users can use the PowerShell commands above instead.
 
 ```bash
 make backend
@@ -327,23 +316,19 @@ make docker-down
 | GET | `/api/history` | Detection history |
 | GET | `/api/health` | Service health |
 
-Interactive API documentation is available at:
-
-**http://localhost:8000/docs**
+Interactive API documentation: `http://localhost:8000/docs`
 
 ## Local vs public deployment
 
-The same codebase can support both local and public environments.
-
 ```text
 LOCAL
-Streamlit :8501 → FastAPI :8000 → Local MySQL :3306
+Browser → HTTPS Streamlit :8501 → FastAPI :8000 → MySQL :3306
 
 PUBLIC
-Streamlit hosting → Public FastAPI → Hosted MySQL
+Browser → HTTPS reverse proxy / hosting → FastAPI → Hosted MySQL
 ```
 
-Use environment variables/secrets for public deployments. Never publish `backend/.env`, database passwords, JWT secrets or private model/data credentials.
+Use environment variables/secrets for public deployments. Never publish `backend/.env`, database passwords, JWT secrets or private model/data credentials. Streamlit also recommends keeping secrets outside source control. citeturn0search10turn0search11
 
 ## Project structure
 
@@ -351,11 +336,6 @@ Use environment variables/secrets for public deployments. Never publish `backend
 Arise-2.0/
 ├── backend/
 │   ├── app/
-│   │   ├── api/
-│   │   ├── core/
-│   │   ├── ml/
-│   │   ├── models/
-│   │   └── schemas/
 │   ├── weights/
 │   ├── uploads/
 │   ├── reports/
@@ -368,30 +348,33 @@ Arise-2.0/
 │   └── requirements.txt
 ├── scripts/
 │   ├── setup_unix.sh
-│   └── setup_windows.ps1
+│   ├── setup_windows.ps1
+│   └── secure_local_macos.sh
 ├── docs/
 ├── docker-compose.yml
 ├── Makefile
 └── README.md
 ```
 
-## Security notes
+## Security checklist
 
 For production:
 
 - Use strong, unique secrets.
 - Keep `.env` files out of Git.
 - Restrict CORS to trusted origins.
-- Use HTTPS/TLS.
-- Store uploads and generated reports securely.
+- Use HTTPS/TLS with a proper public certificate.
+- Prefer TLS termination at a reverse proxy/load balancer for production.
+- Store uploads and reports securely.
 - Apply upload size/type limits.
 - Do not expose MySQL directly to public users.
 - Keep database credentials server-side.
 - Validate model outputs before using them for consequential decisions.
+- Never commit private TLS keys or local CA private keys.
 
 ## Project status
 
-DeepGuard AI is an active development project. The current stack is **Streamlit + FastAPI + PyTorch + MySQL**, with persistent user and detection history. Detection quality depends on model weights, preprocessing, input quality and training data; benchmark models on representative datasets before making production accuracy claims.
+DeepGuard AI is an active development project. Detection quality depends on model weights, preprocessing, input quality and training data; benchmark models on representative datasets before making production accuracy claims.
 
 ## License
 
