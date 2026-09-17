@@ -1,27 +1,30 @@
 services:
   db:
-    image: postgres:16-alpine
+    image: mysql:8.4
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: deepguard
-      POSTGRES_PASSWORD: deepguard
-      POSTGRES_DB: deepguard
+      MYSQL_DATABASE: deepguard
+      MYSQL_USER: deepguard_app
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-deepguard_local}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_local_change_me}
     ports:
-      - "5432:5432"
+      - "3306:3306"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U deepguard"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "deepguard_app", "-p$${MYSQL_PASSWORD}"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
 
   backend:
     build:
       context: ./backend
+    restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+psycopg2://deepguard:deepguard@db:5432/deepguard
-      SECRET_KEY: change-me-in-production
-      DEVICE: cpu
+      DATABASE_URL: mysql+pymysql://deepguard_app:$${MYSQL_PASSWORD}@db:3306/deepguard
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      DEVICE: ${DEVICE:-cpu}
     ports:
       - "8000:8000"
     volumes:
@@ -35,12 +38,14 @@ services:
   frontend:
     build:
       context: ./frontend
+    restart: unless-stopped
     environment:
       DEEPGUARD_API_URL: http://backend:8000
     ports:
       - "8501:8501"
     depends_on:
-      - backend
+      backend:
+        condition: service_started
 
 volumes:
-  pgdata:
+  mysql_data:
