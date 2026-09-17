@@ -2,16 +2,26 @@
 
 Professional AI-powered deepfake detection platform built with **Streamlit + FastAPI + PyTorch + MySQL**.
 
-DeepGuard analyzes image, video, and supported audio inputs and exposes forensic results through a Streamlit user interface backed by a FastAPI inference API.
+DeepGuard analyzes supported image, video, and audio inputs and exposes forensic results through a Streamlit interface backed by a FastAPI inference API and persistent MySQL storage.
+
+## Cross-platform support
+
+DeepGuard is prepared for local development on:
+
+- **Windows 10/11** — PowerShell setup and Windows Python virtual environment
+- **macOS** — Intel and Apple Silicon (M1/M2/M3/M4) where supported by the installed PyTorch build
+- **Linux** — x86_64 and other platforms supported by the selected Python/PyTorch wheels
+- **Docker** — recommended when you want the most consistent environment across operating systems
+
+The repository provides platform-specific setup scripts so users do not need to manually translate Unix commands to Windows.
 
 ## Architecture
 
-```
+```text
 Browser
    │
    ▼
 Streamlit Frontend :8501
-   │
    │ HTTP/REST
    ▼
 FastAPI Backend :8000
@@ -24,11 +34,11 @@ FastAPI Backend :8000
    ▼
 PyTorch ML Pipeline
    ├── EfficientNet
-   ├── Xception
+   ├── Xception / ResNeXt
    └── ViT
    │
-   ▼
-Real / Fake + confidence + risk + forensic signals
+   ├── MySQL persistence
+   └── Real / Fake + confidence + risk + forensic signals
 ```
 
 ## Tech stack
@@ -43,78 +53,68 @@ Real / Fake + confidence + risk + forensic signals
 | Explainability | Grad-CAM / forensic heatmaps |
 | Authentication | JWT |
 | Database | MySQL 8+ / MySQL Community Server |
-| Reports | ReportLab |
-| Testing | PyTest |
 | ORM | SQLAlchemy |
 | MySQL driver | PyMySQL |
-| Deployment | Docker Compose |
+| Reports | ReportLab |
+| Testing | PyTest |
+| Containerization | Docker + Docker Compose |
 
 ## Languages & configuration
 
-The repository uses the following languages and configuration formats:
-
 | Language / format | Usage |
 |---|---|
-| **Python** | FastAPI backend, Streamlit application, ML inference, preprocessing, training and evaluation scripts, tests |
-| **JavaScript / JSX** | Frontend component and page source retained in the repository |
-| **HTML / JSX markup** | Web-facing component markup within the frontend source |
-| **SQL / MySQL** | Relational database schema, queries and persistence at runtime |
-| **Shell (Bash/Zsh)** | Local setup, installation and development scripts |
-| **YAML** | GitHub Actions CI configuration |
-| **Dockerfile** | Backend, frontend and container build definitions |
-| **TOML** | Deployment/runtime configuration |
-| **Makefile** | Development command shortcuts |
-| **Markdown** | Project documentation |
-
-The primary application code is **Python**. MySQL is the production-oriented local database layer, while JavaScript/JSX frontend source remains part of the repository for the existing web interface assets.
+| **Python** | Backend, Streamlit, ML inference, preprocessing, tests and utilities |
+| **SQL / MySQL** | Database persistence and queries |
+| **JavaScript / JSX** | Existing frontend source retained in the repository |
+| **HTML / JSX markup** | Frontend markup where applicable |
+| **Shell (Bash)** | macOS/Linux setup and development scripts |
+| **PowerShell** | Windows setup automation |
+| **YAML** | CI/CD and configuration where present |
+| **Dockerfile** | Container images |
+| **TOML** | Python/deployment configuration where present |
+| **Makefile** | Unix development shortcuts |
+| **Markdown** | Documentation |
 
 ## Requirements
 
-- macOS, Linux, or Windows
-- Python 3.11+
+### Native installation
+
+- Python **3.11+**
 - Git
-- MySQL 8+ / compatible MySQL Community Server
-- ~5 GB free disk space for ML dependencies
-- Optional: Docker Desktop for containerized deployment
+- MySQL **8+** or compatible MySQL Community Server
+- Internet access for Python packages and model dependencies
+- At least ~5 GB free disk space for ML dependencies
+- A supported CPU; GPU acceleration is optional and depends on the PyTorch build and operating system
 
-## Local development
+### Docker installation
 
-### 1. Clone the repository
+- Docker Desktop on Windows/macOS, or Docker Engine + Docker Compose on Linux
+- At least ~6–10 GB RAM recommended for the ML stack
+- Additional disk space for images, dependencies, model weights and MySQL data
+
+> **PyTorch note:** PyTorch wheels vary by operating system, CPU architecture and accelerator. The pinned requirements are the project's tested baseline; if your platform does not provide a compatible wheel for a pinned version, install a compatible official PyTorch build for that platform first, then install the remaining requirements.
+
+## Quick start — macOS / Linux
+
+### 1. Clone
 
 ```bash
 git clone https://github.com/Aradhy25/Arise-2.0.git
 cd Arise-2.0
 ```
 
-### 2. Create and activate the virtual environment
-
-macOS / Linux:
+### 2. Run the setup script
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+chmod +x scripts/setup_unix.sh
+./scripts/setup_unix.sh
 ```
 
-Windows PowerShell:
+The script creates `.venv`, upgrades packaging tools, installs backend/frontend dependencies and creates a safe `backend/.env` template when one does not exist.
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-```
+### 3. Configure MySQL
 
-### 3. Install dependencies
-
-```bash
-python -m pip install --upgrade pip setuptools wheel
-pip install -r backend/requirements.txt
-pip install -r frontend/requirements.txt
-```
-
-If PyTorch installation needs a separate platform-specific command, install the appropriate PyTorch build first, then install the remaining requirements.
-
-### 4. Configure MySQL
-
-Create the application database and user in MySQL:
+Create the application database and user:
 
 ```sql
 CREATE DATABASE deepguard CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -123,96 +123,148 @@ GRANT ALL PRIVILEGES ON deepguard.* TO 'deepguard_app'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
-Create `backend/.env` locally:
+Copy/configure:
+
+```text
+backend/.env.example → backend/.env
+```
+
+Set:
 
 ```env
 DATABASE_URL=mysql+pymysql://deepguard_app:YOUR_URL_ENCODED_PASSWORD@localhost:3306/deepguard
+SECRET_KEY=replace-with-a-long-random-secret
+DEVICE=cpu
+DEFAULT_MODEL=efficientnet
+DEEPGUARD_API_URL=http://localhost:8000
 ```
 
-If your password contains URL-reserved characters such as `@`, encode them in the connection URL. For example, `@` becomes `%40`.
+If the password contains URL-reserved characters such as `@`, encode them. For example, `@` becomes `%40`.
 
-**Never commit `backend/.env` or database credentials to GitHub.**
-
-Verify the connection:
-
-```bash
-./.venv/bin/python -c "import sys; sys.path.insert(0, 'backend'); from sqlalchemy import create_engine; from app.core.config import get_settings; e=create_engine(get_settings().database_url); c=e.connect(); print('MYSQL CONNECTION OK'); c.close()"
-```
-
-Expected:
-
-```text
-MYSQL CONNECTION OK
-```
-
-### 5. Add model weights
-
-Place the EfficientNet checkpoint at:
-
-```text
-backend/weights/efficientnet.pth
-```
-
-Verify:
-
-```bash
-ls -lh backend/weights/efficientnet.pth
-```
-
-Do not commit private credentials, API keys, uploaded media, generated reports, or other sensitive runtime data.
-
-### 6. Start the FastAPI backend
-
-Use the virtual-environment interpreter explicitly:
+### 4. Start backend
 
 ```bash
 ./.venv/bin/python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000
 ```
 
-Keep this terminal running.
+### 5. Start Streamlit
 
-Backend:
-
-- http://localhost:8000
-- http://localhost:8000/docs
-- http://localhost:8000/api/health
-
-### 7. Start the Streamlit frontend
-
-Open a second terminal:
+Open another terminal:
 
 ```bash
-cd ~/Arise-2.0
-source .venv/bin/activate
-./.venv/bin/python -m streamlit run frontend/app.py
+./.venv/bin/python -m streamlit run frontend/app.py --server.port 8501
 ```
 
-Open:
+Open **http://localhost:8501**.
 
-**http://localhost:8501**
+## Quick start — Windows PowerShell
 
-The Streamlit sidebar contains the FastAPI URL. For local development the default is:
+### 1. Clone
+
+```powershell
+git clone https://github.com/Aradhy25/Arise-2.0.git
+cd Arise-2.0
+```
+
+### 2. Run setup
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\scripts\setup_windows.ps1
+```
+
+If Python is installed as `py` rather than `python`, create the environment manually:
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip setuptools wheel
+.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r frontend\requirements.txt
+```
+
+### 3. Configure MySQL
+
+Use MySQL Workbench or the MySQL CLI to create the `deepguard` database and `deepguard_app` user, then copy:
 
 ```text
-http://localhost:8000
+backend\.env.example → backend\.env
 ```
 
-### 8. Test the application
+Set the `DATABASE_URL` to your Windows MySQL instance, for example:
 
-In Streamlit:
+```env
+DATABASE_URL=mysql+pymysql://deepguard_app:YOUR_URL_ENCODED_PASSWORD@localhost:3306/deepguard
+```
 
-1. Open **Scan**.
-2. Upload a supported image, video, or audio file.
-3. Select a detection model.
-4. Optionally enable ensemble analysis.
-5. Run the analysis.
-6. Review the verdict, confidence, fake probability, risk level, explanation, and technical details.
+### 4. Start backend
 
-The **Batch** tab supports multiple files and the **Live** tab supports webcam frame capture.
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000
+```
+
+### 5. Start Streamlit
+
+Open another PowerShell window:
+
+```powershell
+.\.venv\Scripts\python.exe -m streamlit run frontend\app.py --server.port 8501
+```
+
+Open **http://localhost:8501**.
+
+## Quick start — Docker (all supported desktop/server OS)
+
+Docker is the most consistent installation option when you want the same service layout on Windows, macOS or Linux.
+
+From the repository root:
+
+```bash
+docker compose up --build
+```
+
+Services:
+
+| Service | Port | Purpose |
+|---|---:|---|
+| Streamlit | 8501 | Web interface |
+| FastAPI | 8000 | API and inference |
+| MySQL | 3306 | Application database |
+
+Open **http://localhost:8501**.
+
+Stop the stack:
+
+```bash
+docker compose down
+```
+
+Remove containers and the development database volume:
+
+```bash
+docker compose down -v
+```
+
+> Docker Compose uses a MySQL container and does not use your host MySQL installation. This makes the Docker setup independent of whether MySQL is installed natively on Windows, macOS or Linux.
+
+## Model weights
+
+Place the required model checkpoint(s) in:
+
+```text
+backend/weights/
+```
+
+For the current EfficientNet setup:
+
+```text
+backend/weights/efficientnet.pth
+```
+
+Model weights can be large and platform-independent, but inference acceleration depends on the host's PyTorch build. Do not commit private datasets or credentials.
 
 ## Database verification
 
-Connect to MySQL:
+Native installation:
 
 ```bash
 mysql -u deepguard_app -p deepguard
@@ -224,53 +276,43 @@ Then:
 SHOW TABLES;
 ```
 
-Expected application tables:
+Expected application tables include:
 
 ```text
 detections
 users
 ```
 
-Check recent detections:
+Docker installation:
 
-```sql
-SELECT * FROM detections ORDER BY id DESC LIMIT 5;
+```bash
+docker compose exec db mysql -u deepguard_app -p deepguard
 ```
 
-## Makefile shortcuts
+## Testing
 
-With the virtual environment active:
+macOS/Linux:
+
+```bash
+./.venv/bin/python -m pytest -q backend/tests
+```
+
+Windows:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q backend\tests
+```
+
+## Makefile
+
+`make` is convenient on macOS/Linux and is optional on Windows. Native Windows users can use the PowerShell commands above instead.
 
 ```bash
 make backend
 make frontend
 make test
-```
-
-The backend and frontend commands use the project's virtual environment directly.
-
-## Docker Compose
-
-The project can also be run as a multi-service stack:
-
-```bash
-docker compose up --build
-```
-
-Services:
-
-| Service | Local port | Purpose |
-|---|---:|---|
-| Streamlit | 8501 | Web interface |
-| FastAPI | 8000 | API and inference service |
-| MySQL | 5432 | Application database |
-
-Open **http://localhost:8501** after the services start.
-
-Stop the stack:
-
-```bash
-docker compose down
+make docker-up
+make docker-down
 ```
 
 ## API overview
@@ -285,7 +327,23 @@ docker compose down
 | GET | `/api/history` | Detection history |
 | GET | `/api/health` | Service health |
 
-Use **http://localhost:8000/docs** for the interactive API documentation.
+Interactive API documentation is available at:
+
+**http://localhost:8000/docs**
+
+## Local vs public deployment
+
+The same codebase can support both local and public environments.
+
+```text
+LOCAL
+Streamlit :8501 → FastAPI :8000 → Local MySQL :3306
+
+PUBLIC
+Streamlit hosting → Public FastAPI → Hosted MySQL
+```
+
+Use environment variables/secrets for public deployments. Never publish `backend/.env`, database passwords, JWT secrets or private model/data credentials.
 
 ## Project structure
 
@@ -299,103 +357,42 @@ Arise-2.0/
 │   │   ├── models/
 │   │   └── schemas/
 │   ├── weights/
-│   │   └── efficientnet.pth
 │   ├── uploads/
 │   ├── reports/
+│   ├── .env.example
+│   ├── Dockerfile
 │   └── requirements.txt
 ├── frontend/
 │   ├── app.py
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── scripts/
+│   ├── setup_unix.sh
+│   └── setup_windows.ps1
 ├── docs/
 ├── docker-compose.yml
 ├── Makefile
 └── README.md
 ```
 
-## Model and forensic pipeline
-
-A typical visual detection request follows:
-
-1. Media upload.
-2. OpenCV decoding and preprocessing.
-3. Face detection and cropping where applicable.
-4. PyTorch model inference.
-5. Confidence and fake-probability calculation.
-6. Optional ensemble and forensic signals.
-7. Explainability/heatmap generation where supported.
-8. Structured result returned by FastAPI.
-9. Result rendered by Streamlit.
-
-Detection is probabilistic. No deepfake detector should be treated as infallible, especially for high-stakes decisions.
-
-## Research datasets
-
-For research and model development, commonly used datasets include:
-
-- FaceForensics++
-- Celeb-DF
-- DFDC
-- ForgeryNet
-- ASVspoof for relevant audio research
-
-Use datasets according to their licenses and research terms.
-
-## Testing
-
-```bash
-pytest -q backend/tests
-```
-
 ## Security notes
 
-For production deployment:
+For production:
 
-- Replace development secrets with strong environment-managed secrets.
+- Use strong, unique secrets.
+- Keep `.env` files out of Git.
 - Restrict CORS to trusted origins.
-- Do not expose database credentials in source control.
-- Apply upload size/type limits.
-- Store uploaded media securely.
-- Add authentication to endpoints that require user access.
 - Use HTTPS/TLS.
-- Keep model files and generated reports outside public static directories.
-- Review model outputs before using them for consequential decisions.
-
-## Deployment
-
-The recommended production architecture is:
-
-```
-Internet
-   │
-   ▼
-Streamlit application
-   │
-   ▼
-FastAPI service
-   │
-   ├── ML inference
-   ├── PostgreSQL
-   └── secure storage
-```
-
-For container deployment, use:
-
-```bash
-docker compose up --build
-```
-
-For a cloud deployment, deploy the Streamlit frontend and FastAPI backend as separate services and configure:
-
-```text
-DEEPGUARD_API_URL=https://your-api-domain
-```
+- Store uploads and generated reports securely.
+- Apply upload size/type limits.
+- Do not expose MySQL directly to public users.
+- Keep database credentials server-side.
+- Validate model outputs before using them for consequential decisions.
 
 ## Project status
 
-DeepGuard AI is an active development project. The current local development stack uses **Streamlit + FastAPI + MySQL + PyTorch** with persistent user and detection history. Model accuracy depends on the checkpoint, preprocessing, input quality, and training data. Benchmark and validate models on representative datasets before making production claims.
+DeepGuard AI is an active development project. The current stack is **Streamlit + FastAPI + PyTorch + MySQL**, with persistent user and detection history. Detection quality depends on model weights, preprocessing, input quality and training data; benchmark models on representative datasets before making production accuracy claims.
 
 ## License
 
-Add the project's applicable license here before public distribution.
+Add the project's applicable license before public distribution.
