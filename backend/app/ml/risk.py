@@ -27,12 +27,7 @@ def risk_level(fake_probability: float, suspicious_ratio: float = 0.0) -> dict:
         level, label, color = "low", "Low — mostly consistent with authentic media", "#027A48"
     else:
         level, label, color = "minimal", "Minimal — no strong forgery cues", "#027A48"
-    return {
-        "level": level,
-        "label": label,
-        "color": color,
-        "score": round(score, 4),
-    }
+    return {"level": level, "label": label, "color": color, "score": round(score, 4)}
 
 
 def explain_result(
@@ -64,12 +59,16 @@ def explain_result(
             "Audio forensics checked spectral flatness, high-frequency energy, "
             "and zero-crossing stability (common TTS / voice-clone cues)."
         )
-    if mode.startswith("pytorch"):
-        lines.append("Visual path used a PyTorch classifier with Grad-CAM attention mapping.")
+    if mode == "huggingface-vit":
+        lines.append("Visual path used a fine-tuned Real/Fake Vision Transformer classifier.")
+    elif mode.startswith("pytorch"):
+        lines.append("Visual path used a validated local PyTorch classifier with Grad-CAM attention mapping.")
+    elif mode == "forensic-heuristic":
+        lines.append("No trained visual checkpoint was available; the result uses forensic image cues only.")
     if signals:
         if "forensic_ela_score" in signals or "ela_score" in signals:
-            lines.append("Error-level / compression inconsistency cues were included in the score.")
-        if "model_fake_prob" in signals:
-            lines.append(f"Neural net fake probability: {round(float(signals['model_fake_prob']) * 100, 1)}%.")
+            lines.append("Error-level / compression inconsistency cues were included as supporting evidence.")
+        if signals.get("model_fake_prob") is not None:
+            lines.append(f"Neural detector fake probability: {round(float(signals['model_fake_prob']) * 100, 1)}%.")
     lines.append("Treat this as forensic decision-support — not absolute legal proof.")
     return lines
