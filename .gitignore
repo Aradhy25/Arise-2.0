@@ -25,6 +25,10 @@ build/
 *.swp
 *.swo
 
+# Local HTTPS development artifacts
+.cert/
+.streamlit/local-config.toml
+
 # Uploads & artifacts
 backend/uploads/*
 !backend/uploads/.gitkeep
