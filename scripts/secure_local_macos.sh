@@ -10,7 +10,7 @@ CERT_DIR="$ROOT_DIR/.cert"
 CERT_FILE="$CERT_DIR/localhost.pem"
 KEY_FILE="$CERT_DIR/localhost-key.pem"
 CONFIG_DIR="$ROOT_DIR/.streamlit"
-CONFIG_FILE="$CONFIG_DIR/local-config.toml"
+CONFIG_FILE="$CONFIG_DIR/config.toml"
 
 if ! command -v brew >/dev/null 2>&1; then
   echo "Homebrew is required. Install it from https://brew.sh/ and run this script again."
@@ -41,6 +41,8 @@ address = "127.0.0.1"
 port = 8501
 sslCertFile = "$CERT_FILE"
 sslKeyFile = "$KEY_FILE"
+enableCORS = true
+enableXsrfProtection = true
 
 [browser]
 serverAddress = "localhost"
@@ -57,4 +59,4 @@ echo "Start FastAPI separately on port 8000, then keep this terminal running."
 echo ""
 
 cd "$ROOT_DIR"
-exec "$ROOT_DIR/.venv/bin/python" -m streamlit run frontend/app.py --config "$CONFIG_FILE"
+exec "$ROOT_DIR/.venv/bin/python" -m streamlit run frontend/app.py
