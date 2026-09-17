@@ -1,13 +1,11 @@
 """DeepGuard AI — FastAPI application entrypoint."""
 
 from contextlib import asynccontextmanager
-from pathlib import Path
 
-import app.ml.compat  # noqa: F401  — must run before torchvision imports
+import app.ml.compat  # noqa: F401 — must run before torchvision imports
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api import auth, detect, history
@@ -16,8 +14,6 @@ from app.db import session as db_session
 from app.db.models import Base
 from app.ml.inference import get_engine
 from app.schemas import HealthOut
-
-FRONTEND_DIST = None
 
 
 @asynccontextmanager
@@ -32,11 +28,10 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
-        description="Deepfake detection API with Grad-CAM explainability and forensic reports.",
+        description="Deepfake detection API with dedicated Real/Fake inference and forensic reports.",
         lifespan=lifespan,
     )
 
-    # Restrict cross-origin access to explicitly configured trusted origins.
     allowed_origins = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
     app.add_middleware(
         CORSMiddleware,
@@ -63,13 +58,18 @@ def create_app() -> FastAPI:
             eng = get_engine()
             model = eng.model_name
             device = str(eng.device)
-            weights_loaded = eng.has_finetuned_weights
-            inference_mode = "pytorch" if weights_loaded else "pytorch+forensics"
-            status = "ok"
+            detector_loaded = eng.hf_detector is not None or eng.has_finetuned_weights
+            if eng.hf_detector is not None:
+                inference_mode = "huggingface-vit"
+            elif eng.has_finetuned_weights:
+                inference_mode = "pytorch"
+            else:
+                inference_mode = "forensic-heuristic"
+            status = "ok" if detector_loaded else "degraded"
         except Exception:
             model = settings.default_model
             device = settings.device
-            weights_loaded = False
+            detector_loaded = False
             inference_mode = "unavailable"
             status = "degraded"
         return HealthOut(
@@ -78,7 +78,7 @@ def create_app() -> FastAPI:
             version=settings.app_version,
             model=model,
             device=device,
-            weights_loaded=weights_loaded,
+            weights_loaded=detector_loaded,
             inference_mode=inference_mode,
         )
 
