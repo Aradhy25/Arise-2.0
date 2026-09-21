@@ -18,6 +18,7 @@ import torch.nn.functional as F
 from app.core.config import get_settings
 from app.ml.audio import AUDIO_EXTS, analyze_audio
 from app.ml.audio_detector import AudioDeepfakeDetector
+from app.ml.av_sync import estimate_av_consistency
 from app.ml.document import DOCUMENT_EXTS, DocumentForgeryDetector, analyze_document
 from app.ml.provenance import analyze_image_provenance
 from app.ml.architectures.factory import (
@@ -326,6 +327,7 @@ class DeepfakeEngine:
         probs: list[float] = []
         heatmaps: list[np.ndarray] = []
         faces_used = 0
+        face_bboxes: list[tuple[int, int, int, int] | None] = []
         mode = self.detector_backend
         last_signals: dict = {}
 
@@ -333,6 +335,9 @@ class DeepfakeEngine:
             face = self.face_detector.detect_or_full(frame)
             if face.confidence > 0:
                 faces_used += 1
+                face_bboxes.append(tuple(face.bbox))
+            else:
+                face_bboxes.append(None)
             fake_prob, mode, last_signals, heat = self._predict_face(face.image_rgb)
             probs.append(fake_prob)
             heatmaps.append(heat)
@@ -350,8 +355,11 @@ class DeepfakeEngine:
 
         audio_result = None
         audio_tmp = None
+        av_consistency = {"available": False, "reason": "audio unavailable"}
         try:
             audio_tmp = self._extract_video_audio(path)
+            if audio_tmp:
+                av_consistency = estimate_av_consistency(sample.frames, face_bboxes, audio_tmp, sample.fps)
             audio_detector = self._get_audio_detector()
             if audio_tmp and audio_detector is not None:
                 audio_result = audio_detector.predict(audio_tmp)
@@ -402,6 +410,7 @@ class DeepfakeEngine:
                 "audio_detector": audio_result.get("model_id") if audio_result else None,
                 "audio_fake_probability": round(float(audio_result["fake_probability"]), 4) if audio_result else None,
                 "audio_visual_fusion": "70% visual + 30% audio" if audio_result else "visual-only (audio unavailable)",
+                "audio_video_consistency": av_consistency,
                 "realtime": False,
             },
         )
