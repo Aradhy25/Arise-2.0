@@ -1,6 +1,10 @@
 $ErrorActionPreference = 'Stop'
 Write-Host "DeepGuard AI - Windows setup" -ForegroundColor Cyan
 
+if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+    Write-Warning "FFmpeg is not installed. Video+audio analysis will use visual-only mode. Install FFmpeg and add it to PATH."
+}
+
 if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
     throw "Python 3.11+ is required. Install Python and ensure it is available as 'python'."
 }
