@@ -356,6 +356,7 @@ class DeepfakeEngine:
         audio_result = None
         audio_tmp = None
         av_consistency = {"available": False, "reason": "audio unavailable"}
+        final_fake_probability = avg_prob
         try:
             audio_tmp = self._extract_video_audio(path)
             if audio_tmp:
@@ -369,6 +370,7 @@ class DeepfakeEngine:
                 wa = float(self.settings.video_audio_weight)
                 total_w = max(wv + wa, 1e-6)
                 fused = float(np.clip((wv * visual_fake + wa * audio_fake) / total_w, 0.0, 1.0))
+                final_fake_probability = fused
                 prediction = "FAKE" if fused >= self.settings.fake_threshold else "REAL"
                 confidence = fused if prediction == "FAKE" else 1.0 - fused
         finally:
@@ -393,7 +395,8 @@ class DeepfakeEngine:
             details={
                 "face_backend": self.face_detector.backend,
                 "faces_detected_frames": faces_used,
-                "fake_probability": round(avg_prob, 4),
+                "fake_probability": round(final_fake_probability, 4),
+                "visual_fake_probability": round(avg_prob, 4),
                 "frame_probabilities": [round(p, 4) for p in probs],
                 "video_total_frames": sample.total_frames,
                 "video_fps": sample.fps,
