@@ -55,12 +55,22 @@ def explain_result(
             f"({ratio * 100:.0f}% suspicious frame rate)."
         )
     if media_type == "audio" and signals:
-        lines.append(
-            "Audio forensics checked spectral flatness, high-frequency energy, "
-            "and zero-crossing stability (common TTS / voice-clone cues)."
-        )
+        if signals.get("model_fake_probability") is not None:
+            lines.append("Audio path used a trained Wav2Vec2 anti-spoof classifier with chunk-level aggregation plus spectral forensic cues.")
+        else:
+            lines.append("Audio forensics checked spectral flatness, high-frequency energy, and zero-crossing stability.")
+    if media_type == "document":
+        lines.append("Document path checked page-level forgery probability with ELA-assisted visual analysis and PDF structural evidence when available.")
+        if signals and signals.get("structural_flag_count"):
+            lines.append(f"PDF/document structure produced {signals['structural_flag_count']} supporting anomaly flag(s).")
+    if media_type == "video" and signals and signals.get("audio_fake_probability") is not None:
+        lines.append("Video path fused sampled-frame visual evidence with a trained audio anti-spoof probability.")
     if mode == "huggingface-vit":
         lines.append("Visual path used a fine-tuned Real/Fake Vision Transformer classifier.")
+    elif mode == "audio-wav2vec2+forensics":
+        lines.append("Audio path used a fine-tuned Wav2Vec2 Real/Spoof classifier.")
+    elif mode == "document-vit+pdf-forensics":
+        lines.append("Document path used a fine-tuned document-forgery Vision Transformer plus PDF/page forensics.")
     elif mode.startswith("pytorch"):
         lines.append("Visual path used a validated local PyTorch classifier with Grad-CAM attention mapping.")
     elif mode == "forensic-heuristic":
