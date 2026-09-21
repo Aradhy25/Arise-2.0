@@ -66,16 +66,6 @@ class DeepfakeEngine:
         self.detector_backend = "forensic-heuristic"
         self.audio_detector = None
         self.document_detector = None
-        if self.settings.enable_audio_model:
-            try:
-                self.audio_detector = AudioDeepfakeDetector(self.settings.audio_model_id, str(self.device))
-            except Exception:
-                self.audio_detector = None
-        if self.settings.enable_document_model:
-            try:
-                self.document_detector = DocumentForgeryDetector(self.settings.document_model_id, str(self.device))
-            except Exception:
-                self.document_detector = None
 
         # The old EfficientNet path could run an ImageNet backbone with a random
         # binary head and still report 100% confidence. That is not a detector.
@@ -193,10 +183,27 @@ class DeepfakeEngine:
         )
         return enrich_result(result, path)
 
+    def _get_audio_detector(self):
+        if self.audio_detector is None and self.settings.enable_audio_model:
+            try:
+                self.audio_detector = AudioDeepfakeDetector(self.settings.audio_model_id, str(self.device))
+            except Exception:
+                self.audio_detector = None
+        return self.audio_detector
+
+    def _get_document_detector(self):
+        if self.document_detector is None and self.settings.enable_document_model:
+            try:
+                self.document_detector = DocumentForgeryDetector(self.settings.document_model_id, str(self.device))
+            except Exception:
+                self.document_detector = None
+        return self.document_detector
+
     def predict_audio(self, path: Path) -> InferenceResult:
         t0 = time.perf_counter()
         heuristic = analyze_audio(path)
-        model_result = self.audio_detector.predict(path) if self.audio_detector is not None else None
+        audio_detector = self._get_audio_detector()
+        model_result = audio_detector.predict(path) if audio_detector is not None else None
         if model_result is not None:
             fake_prob = float(model_result["fake_probability"])
             mode = "audio-wav2vec2+forensics"
@@ -241,9 +248,10 @@ class DeepfakeEngine:
 
     def predict_document(self, path: Path) -> InferenceResult:
         t0 = time.perf_counter()
-        if self.document_detector is None:
+        document_detector = self._get_document_detector()
+        if document_detector is None:
             raise RuntimeError("Document forgery model is not available")
-        result = analyze_document(path, self.document_detector, max_pages=self.settings.max_document_pages)
+        result = analyze_document(path, document_detector, max_pages=self.settings.max_document_pages)
         elapsed = time.perf_counter() - t0
         return InferenceResult(
             prediction=result["prediction"],
@@ -344,8 +352,9 @@ class DeepfakeEngine:
         audio_tmp = None
         try:
             audio_tmp = self._extract_video_audio(path)
-            if audio_tmp and self.audio_detector is not None:
-                audio_result = self.audio_detector.predict(audio_tmp)
+            audio_detector = self._get_audio_detector()
+            if audio_tmp and audio_detector is not None:
+                audio_result = audio_detector.predict(audio_tmp)
                 audio_fake = float(audio_result["fake_probability"])
                 visual_fake = avg_prob
                 wv = float(self.settings.video_audio_visual_weight)
