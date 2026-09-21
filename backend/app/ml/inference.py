@@ -393,7 +393,11 @@ class DeepfakeEngine:
                 "finetuned_weights": self.has_finetuned_weights,
                 "detector_backend": self.detector_backend,
                 "detector_model_id": self.settings.hf_model_id if self.hf_detector else None,
-                "signals": last_signals,
+                "signals": {
+                    **last_signals,
+                    "audio_fake_probability": round(float(audio_result["fake_probability"]), 4) if audio_result else None,
+                    "audio_visual_fusion": "70% visual + 30% audio" if audio_result else "visual-only",
+                },
                 "aggregation": "mean_frame_probability",
                 "audio_detector": audio_result.get("model_id") if audio_result else None,
                 "audio_fake_probability": round(float(audio_result["fake_probability"]), 4) if audio_result else None,
