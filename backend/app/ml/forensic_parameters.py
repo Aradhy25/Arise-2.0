@@ -52,6 +52,10 @@ DETECTION_PARAMETERS: dict[str, dict[str, Any]] = {
             "PDF metadata and structural checks",
             "page-level probability aggregation",
             "page-level forensic evidence",
+            "PDF provenance notes",
+            "repeated text-block analysis",
+            "repeated embedded-image reference analysis",
+            "per-page text/image structure metrics",
         ],
         "parameters": [
             "PDF object/xref structure consistency",
