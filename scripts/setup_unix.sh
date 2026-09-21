@@ -3,6 +3,11 @@ set -euo pipefail
 
 echo "DeepGuard AI - macOS/Linux setup"
 
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  echo "WARNING: FFmpeg is not installed. Video+audio analysis will fall back to visual-only mode."
+  echo "macOS: brew install ffmpeg | Debian/Ubuntu: sudo apt-get install ffmpeg"
+fi
+
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
   echo "Python 3.11+ is required. Set PYTHON_BIN to your Python executable."
