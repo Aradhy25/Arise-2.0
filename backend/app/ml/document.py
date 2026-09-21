@@ -78,15 +78,47 @@ def _pdf_structure(path: Path) -> dict:
         text_chars = 0
         image_count = 0
         font_names: set[str] = set()
-        for page in doc:
-            text_chars += len(page.get_text("text"))
-            image_count += len(page.get_images(full=True))
+        image_xrefs: list[int] = []
+        duplicate_text_blocks = 0
+        text_block_count = 0
+        page_metrics: list[dict] = []
+
+        for page_number, page in enumerate(doc, 1):
+            text = page.get_text("text")
+            blocks = page.get_text("blocks")
+            text_chars += len(text)
+            text_block_count += len(blocks)
+
+            normalized_blocks = []
+            for block in blocks:
+                if len(block) >= 5 and block[4].strip():
+                    normalized_blocks.append(block[4].strip().lower())
+            counts: dict[str, int] = {}
+            for block_text in normalized_blocks:
+                counts[block_text] = counts.get(block_text, 0) + 1
+            duplicate_text_blocks += sum(max(0, count - 1) for count in counts.values())
+
+            page_images = page.get_images(full=True)
+            image_count += len(page_images)
+            for image in page_images:
+                if image and image[0]:
+                    image_xrefs.append(int(image[0]))
+
             for font in page.get_fonts(full=True):
                 if font and font[3]:
                     font_names.add(str(font[3]))
 
+            page_metrics.append({
+                "page": page_number,
+                "text_characters": len(text),
+                "text_blocks": len(blocks),
+                "embedded_images": len(page_images),
+            })
+
         xref_count = getattr(doc, "xref_length", lambda: 0)()
         repaired = bool(getattr(doc, "is_repaired", False))
+        unique_image_xrefs = len(set(image_xrefs))
+        duplicate_image_refs = max(0, len(image_xrefs) - unique_image_xrefs)
         doc.close()
 
         suspicious = []
@@ -94,16 +126,38 @@ def _pdf_structure(path: Path) -> dict:
             suspicious.append("PDF parser reported a repaired/corrected structure.")
         if pages and image_count > pages * 25:
             suspicious.append("Unusually high embedded-image count per page.")
+        if duplicate_image_refs:
+            suspicious.append("Repeated embedded-image references were found; this can be normal in templates but is worth review.")
+        if duplicate_text_blocks:
+            suspicious.append("Repeated text blocks were found; this can be normal in forms but may indicate copy/paste or overlay editing.")
         if meta.get("creationDate") and meta.get("modDate") and meta["creationDate"] != meta["modDate"]:
             suspicious.append("Creation and modification timestamps differ.")
+
+        provenance_notes = []
+        software = str(meta.get("producer") or meta.get("creator") or "").strip()
+        if software:
+            provenance_notes.append(f"PDF producer/creator metadata: {software}")
+        else:
+            provenance_notes.append("No producer/creator metadata was exposed by the PDF parser.")
+        if meta.get("creationDate") and meta.get("modDate"):
+            provenance_notes.append("Creation and modification timestamps are both present.")
+        elif meta.get("creationDate") or meta.get("modDate"):
+            provenance_notes.append("Only one of creation/modification timestamps is present.")
+
         return {
             "pages": pages,
             "text_characters": text_chars,
+            "text_blocks": text_block_count,
+            "duplicate_text_blocks": duplicate_text_blocks,
             "embedded_images": image_count,
+            "unique_embedded_images": unique_image_xrefs,
+            "duplicate_image_references": duplicate_image_refs,
             "embedded_fonts": sorted(font_names)[:100],
             "xref_objects": xref_count,
             "parser_repaired": repaired,
             "metadata": meta,
+            "provenance_notes": provenance_notes,
+            "page_metrics": page_metrics,
             "structural_flags": suspicious,
         }
     except Exception as exc:
