@@ -19,6 +19,7 @@ from app.core.rate_limit import public_limiter
 from app.db.models import Detection, User
 from app.db.session import get_db
 from app.ml.inference import ALL_MEDIA_EXTS, AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS, get_engine
+from app.ml.forensic_parameters import get_detection_parameters
 from app.schemas import (
     AdminStatsOut,
     BatchDetectionOut,
@@ -192,7 +193,7 @@ async def detect_ensemble(
     request: Request,
     file: UploadFile = File(...),
 ) -> PublicDetectionOut:
-    """Advanced multi-model vote (EfficientNet + Xception + ViT)."""
+    """Advanced detector path with calibrated modality-specific evidence."""
     client = request.client.host if request.client else "unknown"
     public_limiter.check(f"ensemble:{client}")
     dest, ext, _ = await _save_upload(file)
@@ -328,17 +329,26 @@ def admin_stats(
     )
 
 
+@router.get("/parameters")
+def detection_parameters(modality: str | None = None) -> dict:
+    """Return the forensic parameters used/planned for each media modality."""
+    try:
+        return {"parameters": get_detection_parameters(modality)} if modality else {"parameters": get_detection_parameters()}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown modality: {exc.args[0]}") from exc
+
+
 @router.get("/models")
 def list_models() -> dict:
     engine = get_engine()
     return {
         "models": [
             {
-                "id": "efficientnet",
-                "name": "EfficientNet-B0",
+                "id": "vit-deepfake",
+                "name": "Fine-tuned Vision Transformer",
                 "phase": 1,
                 "modalities": ["image", "video"],
-                "description": "Visual deepfake CNN + Grad-CAM",
+                "description": "Validated Real/Fake visual detector with forensic evidence",
             },
             {
                 "id": "xception",
@@ -363,10 +373,10 @@ def list_models() -> dict:
             },
             {
                 "id": "audio-forensics",
-                "name": "Audio Forensics",
+                "name": "Audio Forensics (heuristic)",
                 "phase": 2,
                 "modalities": ["audio"],
-                "description": "Voice-clone / TTS spectral forensics",
+                "description": "Spectral and waveform cues; trained anti-spoof model planned",
             },
         ],
         "features": [
