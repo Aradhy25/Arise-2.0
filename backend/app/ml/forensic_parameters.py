@@ -15,11 +15,13 @@ DETECTION_PARAMETERS: dict[str, dict[str, Any]] = {
         "decision": "trained Real/Fake probability + auxiliary forensic evidence",
         "implemented_now": [
             "Vision Transformer Real/Fake probability",
+            "face + full-frame multi-view fusion",
             "ELA/recompression inconsistency",
             "frequency-domain anomaly",
             "local noise inconsistency",
             "RGB channel correlation",
             "face detection confidence and crop location",
+            "EXIF/provenance signals",
             "Grad-CAM / forensic heatmap",
         ],
         "additional_high_accuracy_signals": [
@@ -44,7 +46,13 @@ DETECTION_PARAMETERS: dict[str, dict[str, Any]] = {
     },
     "document": {
         "decision": "document-integrity evidence + trained page/document forgery classifier",
-        "implemented_now": [],
+        "implemented_now": [
+            "PDF rendering and page sampling",
+            "ELA-assisted document ViT classification",
+            "PDF metadata and structural checks",
+            "page-level probability aggregation",
+            "page-level forensic evidence",
+        ],
         "parameters": [
             "PDF object/xref structure consistency",
             "incremental-update and revision history anomalies",
@@ -71,6 +79,8 @@ DETECTION_PARAMETERS: dict[str, dict[str, Any]] = {
     "audio": {
         "decision": "trained anti-spoof probability + signal-level forensic evidence",
         "implemented_now": [
+            "fine-tuned Wav2Vec2 Real/Spoof classifier",
+            "multi-chunk probability aggregation",
             "spectral flatness",
             "high-frequency energy ratio",
             "zero-crossing-rate statistics",
@@ -102,6 +112,9 @@ DETECTION_PARAMETERS: dict[str, dict[str, Any]] = {
             "per-frame image deepfake probability",
             "suspicious-frame ratio",
             "frame probability aggregation",
+            "audio extraction when FFmpeg is available",
+            "trained audio anti-spoof probability",
+            "configurable visual/audio fusion",
         ],
         "additional_high_accuracy_signals": [
             "temporal face consistency",
