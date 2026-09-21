@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     detector_backend: str = "huggingface"
     hf_model_id: str = "dima806/deepfake_vs_real_image_detection"
     use_local_checkpoint: bool = False
+    document_model_id: str = "zodumair/document-forgery-detector"
+    audio_model_id: str = "Vansh180/deepfake-audio-wav2vec2"
+    max_document_pages: int = 8
+    enable_audio_model: bool = True
+    enable_document_model: bool = True
+    video_audio_visual_weight: float = 0.70
+    video_audio_weight: float = 0.30
 
     # CORS — comma-separated trusted origins. Configure HTTPS localhost for secure local UI.
     cors_origins: str = "https://localhost:8501,http://localhost:8501,http://localhost:5173,http://localhost:3000,http://127.0.0.1:8501,http://127.0.0.1:5173"
