@@ -173,6 +173,7 @@ def render_parameter_evidence(result: dict):
             ("Audio fake probability", details.get("audio_fake_probability")),
             ("Suspicious frame ratio", (result.get("suspicious_frames", 0) / max(result.get("frames_analyzed", 1), 1))),
             ("Frames analyzed", result.get("frames_analyzed")),
+            ("A/V alignment score", (details.get("audio_video_consistency") or {}).get("alignment_score")),
         ]
     else:
         labels = []
