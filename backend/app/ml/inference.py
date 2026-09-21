@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import time
 import uuid
+import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -15,6 +17,9 @@ import torch.nn.functional as F
 
 from app.core.config import get_settings
 from app.ml.audio import AUDIO_EXTS, analyze_audio
+from app.ml.audio_detector import AudioDeepfakeDetector
+from app.ml.document import DOCUMENT_EXTS, DocumentForgeryDetector, analyze_document
+from app.ml.provenance import analyze_image_provenance
 from app.ml.architectures.factory import (
     HuggingFaceDeepfakeDetector,
     build_model,
@@ -30,7 +35,7 @@ from app.ml.video import sample_video_frames
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
-ALL_MEDIA_EXTS = IMAGE_EXTS | VIDEO_EXTS | AUDIO_EXTS
+ALL_MEDIA_EXTS = IMAGE_EXTS | VIDEO_EXTS | AUDIO_EXTS | DOCUMENT_EXTS
 
 
 @dataclass
@@ -59,6 +64,18 @@ class DeepfakeEngine:
         self.hf_detector = None
         self.has_finetuned_weights = False
         self.detector_backend = "forensic-heuristic"
+        self.audio_detector = None
+        self.document_detector = None
+        if self.settings.enable_audio_model:
+            try:
+                self.audio_detector = AudioDeepfakeDetector(self.settings.audio_model_id, str(self.device))
+            except Exception:
+                self.audio_detector = None
+        if self.settings.enable_document_model:
+            try:
+                self.document_detector = DocumentForgeryDetector(self.settings.document_model_id, str(self.device))
+            except Exception:
+                self.document_detector = None
 
         # The old EfficientNet path could run an ImageNet backbone with a random
         # binary head and still report 100% confidence. That is not a detector.
@@ -104,6 +121,8 @@ class DeepfakeEngine:
             result = self.predict_video(path)
         elif ext in AUDIO_EXTS:
             result = self.predict_audio(path)
+        elif ext in DOCUMENT_EXTS:
+            result = self.predict_document(path)
         else:
             raise ValueError(f"Unsupported file type: {ext}")
         return enrich_result(result, path)
@@ -176,23 +195,75 @@ class DeepfakeEngine:
 
     def predict_audio(self, path: Path) -> InferenceResult:
         t0 = time.perf_counter()
-        result = analyze_audio(path)
+        heuristic = analyze_audio(path)
+        model_result = self.audio_detector.predict(path) if self.audio_detector is not None else None
+        if model_result is not None:
+            fake_prob = float(model_result["fake_probability"])
+            mode = "audio-wav2vec2+forensics"
+            signals = {
+                **heuristic["signals"],
+                "model_fake_probability": round(fake_prob, 4),
+                "model_real_probability": round(model_result["real_probability"], 4),
+                "chunk_probabilities": model_result["chunk_probabilities"],
+                "chunks_analyzed": model_result["chunks_analyzed"],
+                "model_id": model_result["model_id"],
+            }
+            model_name = "wav2vec2-audio-deepfake"
+            model_version = "hf-vansh180"
+        else:
+            fake_prob = float(heuristic["fake_probability"])
+            mode = "audio-forensics"
+            signals = heuristic["signals"]
+            model_name = "audio-forensics"
+            model_version = "heuristic-1.0"
+        prediction = "FAKE" if fake_prob >= self.settings.fake_threshold else "REAL"
+        confidence = fake_prob if prediction == "FAKE" else 1.0 - fake_prob
+        elapsed = time.perf_counter() - t0
+        return InferenceResult(
+            prediction=prediction,
+            confidence=round(confidence, 4),
+            model_name=model_name,
+            model_version=model_version,
+            media_type="audio",
+            frames_analyzed=1,
+            suspicious_frames=1 if prediction == "FAKE" else 0,
+            processing_time_sec=round(elapsed, 3),
+            mode=mode,
+            details={
+                "fake_probability": round(fake_prob, 4),
+                "signals": signals,
+                "finetuned_weights": model_result is not None,
+                "detector_backend": "wav2vec2" if model_result is not None else "forensic-heuristic",
+                "detector_model_id": self.settings.audio_model_id if model_result is not None else None,
+                "modality": "audio",
+            },
+        )
+
+    def predict_document(self, path: Path) -> InferenceResult:
+        t0 = time.perf_counter()
+        if self.document_detector is None:
+            raise RuntimeError("Document forgery model is not available")
+        result = analyze_document(path, self.document_detector, max_pages=self.settings.max_document_pages)
         elapsed = time.perf_counter() - t0
         return InferenceResult(
             prediction=result["prediction"],
-            confidence=result["confidence"],
-            model_name="audio-forensics",
-            model_version="1.0",
-            media_type="audio",
-            frames_analyzed=1,
-            suspicious_frames=1 if result["prediction"] == "FAKE" else 0,
+            confidence=round(float(result["confidence"]), 4),
+            model_name="document-forgery-vit",
+            model_version="hf-zodumair",
+            media_type="document",
+            frames_analyzed=result["pages_analyzed"],
+            suspicious_frames=sum(1 for p in result["page_results"] if p["label"] == "FAKE"),
             processing_time_sec=round(elapsed, 3),
-            mode=result["mode"],
+            mode="document-vit+pdf-forensics",
             details={
-                "fake_probability": result["fake_probability"],
+                "fake_probability": round(float(result["fake_probability"]), 4),
                 "signals": result["signals"],
-                "finetuned_weights": False,
-                "modality": "audio",
+                "pages": result["page_results"],
+                "structure": result["structure"],
+                "detector_backend": "document-vit",
+                "detector_model_id": result["model_id"],
+                "finetuned_weights": True,
+                "modality": "document",
             },
         )
 
@@ -200,8 +271,16 @@ class DeepfakeEngine:
         t0 = time.perf_counter()
         image = read_image(str(path))
         face = self.face_detector.detect_or_full(image)
-        fake_prob, mode, signals, heatmap = self._predict_face(face.image_rgb)
+        face_prob, mode, signals, heatmap = self._predict_face(face.image_rgb)
+        full_frame_prob = None
+        if self.hf_detector is not None and face.confidence > 0:
+            full_frame_prob = float(np.clip(self.hf_detector.predict(image), 0.0, 1.0))
+            fake_prob = float(np.clip(0.75 * face_prob + 0.25 * full_frame_prob, 0.0, 1.0))
+            signals = {**signals, "full_frame_fake_prob": round(full_frame_prob, 4), "face_fake_prob": round(face_prob, 4), "view_fusion": "75% face + 25% full-frame"}
+        else:
+            fake_prob = face_prob
 
+        provenance = analyze_image_provenance(path)
         prediction = "FAKE" if fake_prob >= self.settings.fake_threshold else "REAL"
         confidence = fake_prob if prediction == "FAKE" else 1.0 - fake_prob
         heatmap_path = self._save_heatmap(face.image_rgb, heatmap)
@@ -228,6 +307,8 @@ class DeepfakeEngine:
                 "detector_backend": self.detector_backend,
                 "detector_model_id": self.settings.hf_model_id if self.hf_detector else None,
                 "realtime": False,
+                "provenance": provenance,
+                "originality_note": "Classifier evidence is not proof of original source ownership or first capture.",
             },
         )
 
@@ -259,6 +340,27 @@ class DeepfakeEngine:
             face = self.face_detector.detect_or_full(sample.frames[idx])
             heatmap_path = self._save_heatmap(face.image_rgb, heatmaps[idx])
 
+        audio_result = None
+        audio_tmp = None
+        try:
+            audio_tmp = self._extract_video_audio(path)
+            if audio_tmp and self.audio_detector is not None:
+                audio_result = self.audio_detector.predict(audio_tmp)
+                audio_fake = float(audio_result["fake_probability"])
+                visual_fake = avg_prob
+                wv = float(self.settings.video_audio_visual_weight)
+                wa = float(self.settings.video_audio_weight)
+                total_w = max(wv + wa, 1e-6)
+                fused = float(np.clip((wv * visual_fake + wa * audio_fake) / total_w, 0.0, 1.0))
+                prediction = "FAKE" if fused >= self.settings.fake_threshold else "REAL"
+                confidence = fused if prediction == "FAKE" else 1.0 - fused
+        finally:
+            if audio_tmp:
+                try:
+                    audio_tmp.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
         elapsed = time.perf_counter() - t0
         return InferenceResult(
             prediction=prediction,
@@ -284,6 +386,9 @@ class DeepfakeEngine:
                 "detector_model_id": self.settings.hf_model_id if self.hf_detector else None,
                 "signals": last_signals,
                 "aggregation": "mean_frame_probability",
+                "audio_detector": audio_result.get("model_id") if audio_result else None,
+                "audio_fake_probability": round(float(audio_result["fake_probability"]), 4) if audio_result else None,
+                "audio_visual_fusion": "70% visual + 30% audio" if audio_result else "visual-only (audio unavailable)",
                 "realtime": False,
             },
         )
@@ -384,6 +489,21 @@ class DeepfakeEngine:
             **{f"forensic_{k}": v for k, v in forensic["signals"].items()},
         }
         return forensic_p, "forensic-heuristic", signals, cam
+
+    def _extract_video_audio(self, path: Path) -> Path | None:
+        try:
+            fd, name = tempfile.mkstemp(suffix=".wav")
+            import os
+            os.close(fd)
+            out = Path(name)
+            cmd = ["ffmpeg", "-y", "-i", str(path), "-vn", "-ac", "1", "-ar", "16000", "-t", "180", str(out)]
+            completed = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
+            if completed.returncode != 0 or not out.exists() or out.stat().st_size < 1024:
+                out.unlink(missing_ok=True)
+                return None
+            return out
+        except (FileNotFoundError, subprocess.SubprocessError, OSError):
+            return None
 
     def _save_heatmap(self, image_rgb: np.ndarray, cam: np.ndarray) -> Path | None:
         try:
