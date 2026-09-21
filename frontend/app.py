@@ -17,7 +17,7 @@ st.set_page_config(
 )
 
 API_URL = os.getenv("DEEPGUARD_API_URL", "http://localhost:8000").rstrip("/")
-MEDIA_TYPES = ["jpg", "jpeg", "png", "webp", "bmp", "mp4", "mov", "avi", "mkv", "webm", "mp3", "wav", "m4a", "flac"]
+MEDIA_TYPES = ["jpg", "jpeg", "png", "webp", "bmp", "pdf", "mp4", "mov", "avi", "mkv", "webm", "mp3", "wav", "m4a", "flac"]
 
 
 st.markdown(
@@ -135,6 +135,73 @@ def save_result(result: dict, filename: str):
     st.session_state["last_result"] = result
 
 
+def render_parameter_evidence(result: dict):
+    details = result.get("details") or {}
+    media = str(result.get("media_type", "unknown"))
+    signals = details.get("signals") or {}
+    st.markdown('<div class="section-head"><h2>Forensic parameters</h2><span>Measured evidence</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    if media == "image":
+        labels = [
+            ("Model fake probability", signals.get("model_fake_prob")),
+            ("Forensic ELA", signals.get("forensic_ela_score", signals.get("ela_score"))),
+            ("Frequency anomaly", signals.get("forensic_frequency_score", signals.get("frequency_score"))),
+            ("Noise inconsistency", signals.get("forensic_noise_score", signals.get("noise_score"))),
+            ("RGB correlation anomaly", signals.get("forensic_color_score", signals.get("color_score"))),
+            ("Face confidence", details.get("face_confidence")),
+            ("Full-frame probability", signals.get("full_frame_fake_prob")),
+        ]
+    elif media == "audio":
+        labels = [
+            ("Model fake probability", signals.get("model_fake_probability")),
+            ("Spectral flatness", signals.get("spectral_flatness")),
+            ("High-frequency ratio", signals.get("high_freq_ratio")),
+            ("ZCR mean", signals.get("zcr_mean")),
+            ("ZCR variability", signals.get("zcr_std")),
+        ]
+    elif media == "document":
+        labels = [
+            ("Document fake probability", details.get("fake_probability")),
+            ("Maximum page probability", signals.get("max_page_fake_probability")),
+            ("Mean page probability", signals.get("mean_page_fake_probability")),
+            ("Structural anomaly flags", signals.get("structural_flag_count")),
+            ("Pages analyzed", signals.get("pages_analyzed")),
+        ]
+    elif media == "video":
+        labels = [
+            ("Visual fake probability", details.get("fake_probability")),
+            ("Audio fake probability", details.get("audio_fake_probability")),
+            ("Suspicious frame ratio", (result.get("suspicious_frames", 0) / max(result.get("frames_analyzed", 1), 1))),
+            ("Frames analyzed", result.get("frames_analyzed")),
+        ]
+    else:
+        labels = []
+    shown = 0
+    for label, value in labels:
+        if value is None:
+            continue
+        shown += 1
+        if isinstance(value, (int, float)):
+            width = min(max(float(value) * 100 if float(value) <= 1 else float(value), 0), 100)
+            display = pct(value) if float(value) <= 1 else escape(str(value))
+        else:
+            width = 0
+            display = escape(str(value))
+        st.markdown(f'<div class="signal"><div class="signal-name">{escape(label)}</div><div class="track"><div class="fill" style="width:{width:.1f}%"></div></div><div class="signal-value">{display}</div></div>', unsafe_allow_html=True)
+    if not shown:
+        st.caption("No structured modality-specific parameters were returned.")
+    if details.get("provenance"):
+        with st.expander("Originality / provenance signals", expanded=False):
+            st.json(details["provenance"])
+    if details.get("structure"):
+        with st.expander("Document structure evidence", expanded=False):
+            st.json(details["structure"])
+    if details.get("pages"):
+        with st.expander("Page-by-page evidence", expanded=False):
+            st.json(details["pages"])
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
 def render_result(result: dict):
     prediction = str(result.get("prediction", "UNKNOWN")).upper()
     details = result.get("details") or {}
@@ -199,6 +266,8 @@ def render_result(result: dict):
         if result.get("sha256"):
             st.markdown(f'<div class="metric-label">SHA-256</div><div class="muted" style="word-break:break-all;margin-top:.4rem">{escape(str(result["sha256"]))}</div>', unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
+
+    render_parameter_evidence(result)
 
 
 if "history" not in st.session_state:
@@ -326,7 +395,7 @@ elif page == "Analyze":
     if mode == "Single":
         left, right = st.columns([1.3, .7], gap="large")
         with left:
-            st.markdown('<div class="scan-zone"><div class="scan-zone-inner"><div><div class="scan-icon">↥</div><div class="scan-title">Drop evidence into the investigation</div><div class="scan-copy">Image · video · audio · maximum 100 MB</div></div></div>', unsafe_allow_html=True)
+            st.markdown('<div class="scan-zone"><div class="scan-zone-inner"><div><div class="scan-icon">↥</div><div class="scan-title">Drop evidence into the investigation</div><div class="scan-copy">Image · PDF · video · audio · maximum 100 MB</div></div></div>', unsafe_allow_html=True)
             uploaded = st.file_uploader("Evidence file", type=MEDIA_TYPES, label_visibility="collapsed", key="single_upload")
             st.markdown("</div>", unsafe_allow_html=True)
             if uploaded and uploaded.type.startswith("image/"):
@@ -334,16 +403,16 @@ elif page == "Analyze":
 
         with right:
             st.markdown('<div class="panel"><div class="panel-title">Inference configuration</div><div class="panel-sub">Select the engine and analysis depth.</div><br>', unsafe_allow_html=True)
-            model = st.selectbox("Detection model", ["efficientnet", "xception", "vit"], index=0)
-            ensemble = st.toggle("Ensemble analysis", value=False)
-            st.markdown('<div class="muted" style="margin:.55rem 0 1rem">Ensemble analysis can broaden the signal at the cost of processing time.</div>', unsafe_allow_html=True)
+            model = st.selectbox("Detection engine", ["automatic multimodal"], index=0)
+            ensemble = False
+            st.markdown('<div class="muted" style="margin:.55rem 0 1rem">DeepGuard automatically routes images, PDFs, audio, and video to their modality-specific detector and evidence pipeline.</div>', unsafe_allow_html=True)
             run = st.button("Run forensic analysis  →", type="primary", use_container_width=True, disabled=uploaded is None)
             st.markdown("</div>", unsafe_allow_html=True)
 
         if run and uploaded:
             with st.spinner("Executing forensic pipeline…"):
                 try:
-                    response = api_post_file("/api/detect/public", uploaded, model_name=model, ensemble=str(ensemble).lower())
+                    response = api_post_file("/api/detect/public", uploaded, model_name="automatic", ensemble="false")
                     if response.ok:
                         save_result(response.json(), uploaded.name)
                         st.success("Investigation completed.")
