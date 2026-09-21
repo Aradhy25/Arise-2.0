@@ -391,3 +391,22 @@ DeepGuard AI is an active development project. Detection quality depends on mode
 ## License
 
 Add the project's applicable license before public distribution.
+
+
+## Multimodal forensic detection
+
+DeepGuard now routes evidence by modality:
+
+- **Images:** fine-tuned Real/Fake ViT + ELA, frequency, noise, color-channel, face and provenance signals.
+- **PDF documents:** fine-tuned document-forgery ViT + ELA-assisted page analysis + PDF structural/metadata checks.
+- **Audio:** fine-tuned Wav2Vec2 anti-spoof classifier + spectral forensic cues, with chunk aggregation.
+- **Video:** sampled-frame visual detector + optional extracted-audio anti-spoof model with configurable calibrated fusion weights.
+
+The API exposes measured parameters at /api/detect/parameters and per modality via ?modality=image|document|audio|video_audio.
+
+### Runtime dependencies
+
+Video+audio analysis uses FFmpeg. On macOS install it with brew install ffmpeg; on Debian/Ubuntu install the ffmpeg package. Docker installs FFmpeg automatically.
+
+The default document model reports about 91% accuracy on the model author's 500-sample internal test and explicitly warns that programmatic forgery training may not generalize to modern AI inpainting. The default audio model reports 92.8% accuracy on a balanced ASVspoof 2021 PA evaluation. These are model-card figures, not DeepGuard production guarantees. Current in-the-wild evaluations show that deepfake detector performance can degrade sharply on unseen generators and ordinary image processing, so DeepGuard exposes evidence and model provenance rather than claiming universal accuracy.
+
