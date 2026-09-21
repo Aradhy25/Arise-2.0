@@ -19,6 +19,7 @@ from app.core.rate_limit import public_limiter
 from app.db.models import Detection, User
 from app.db.session import get_db
 from app.ml.inference import ALL_MEDIA_EXTS, AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS, get_engine
+from app.ml.document import DOCUMENT_EXTS
 from app.ml.forensic_parameters import get_detection_parameters
 from app.schemas import (
     AdminStatsOut,
@@ -63,6 +64,8 @@ def _media_type(ext: str) -> str:
         return "image"
     if ext in VIDEO_EXTS:
         return "video"
+    if ext in DOCUMENT_EXTS and ext == ".pdf":
+        return "document"
     return "audio"
 
 
@@ -351,25 +354,25 @@ def list_models() -> dict:
                 "description": "Validated Real/Fake visual detector with forensic evidence",
             },
             {
-                "id": "xception",
-                "name": "Xception / ResNeXt-50",
+                "id": "audio-wav2vec2",
+                "name": "Wav2Vec2 Audio Anti-Spoof",
                 "phase": 2,
-                "modalities": ["image", "video"],
-                "description": "Stronger visual CNN baseline",
+                "modalities": ["audio", "video"],
+                "description": "Fine-tuned speech Real/Fake classifier with chunk aggregation",
             },
             {
-                "id": "vit",
-                "name": "Vision Transformer (ViT-B/16)",
+                "id": "document-forgery-vit",
+                "name": "Document Forgery ViT",
+                "phase": 2,
+                "modalities": ["document"],
+                "description": "ELA-assisted document Real/Forged classifier plus PDF structure checks",
+            },
+            {
+                "id": "multimodal-video",
+                "name": "Video + Audio Fusion",
                 "phase": 3,
-                "modalities": ["image", "video"],
-                "description": "Transformer visual model",
-            },
-            {
-                "id": "ensemble",
-                "name": "Ensemble (3-model vote)",
-                "phase": 4,
-                "modalities": ["image", "video"],
-                "description": "EfficientNet + Xception + ViT majority vote",
+                "modalities": ["video"],
+                "description": "Temporal visual evidence fused with speech anti-spoof probability",
             },
             {
                 "id": "audio-forensics",
@@ -394,10 +397,11 @@ def list_models() -> dict:
             "image": sorted(IMAGE_EXTS),
             "video": sorted(VIDEO_EXTS),
             "audio": sorted(AUDIO_EXTS),
+            "document": sorted(DOCUMENT_EXTS),
         },
         "default": get_settings().default_model,
         "weights_loaded": engine.has_finetuned_weights,
-        "inference_mode": "pytorch" if engine.has_finetuned_weights else "pytorch+forensics",
+        "inference_mode": "huggingface-vit" if engine.hf_detector is not None else ("pytorch" if engine.has_finetuned_weights else "forensic-heuristic"),
         "public_endpoint": "/api/detect/public",
         "note": (
             "DeepGuard analyzes face-swap, face-reenactment, and diffusion-style visual forgeries "
